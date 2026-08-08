@@ -220,7 +220,14 @@ class DigitalTwin:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
-    twin = DigitalTwin(offline=True)
+    from config.config import API
+    use_offline = not bool(API.firms_map_key)
+    if use_offline:
+        logger.info("No FIRMS_MAP_KEY found - running in offline/synthetic mode.")
+    else:
+        logger.info("FIRMS_MAP_KEY found - fetching real satellite data.")
+
+    twin = DigitalTwin(offline=use_offline)
     snapshot = twin.refresh()
 
     print("\n=== TWIN SUMMARY ===")
