@@ -186,13 +186,19 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-    from config.config import REGION, SYSTEM
+    from config.config import API, REGION, SYSTEM
     from src.data_ingestion.ingestion_module import DataIngestionModule
     from src.data_processing.feature_engineering import DataProcessor
 
     logging.basicConfig(level=logging.INFO)
 
-    ingestion = DataIngestionModule(offline=True)
+    use_offline = not bool(API.firms_map_key)
+    if use_offline:
+        logging.info("No FIRMS_MAP_KEY found - running in offline/synthetic mode.")
+    else:
+        logging.info("FIRMS_MAP_KEY found - fetching real satellite data.")
+
+    ingestion = DataIngestionModule(offline=use_offline)
     unified = ingestion.build_unified_frame()
     processed = DataProcessor().transform(unified)
 

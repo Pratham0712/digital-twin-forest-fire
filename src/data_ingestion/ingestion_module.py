@@ -142,7 +142,7 @@ class DataIngestionModule:
             unified["fire_brightness"] = np.nan
             unified["active_fire_nearby"] = False
 
-        unified["ingested_at"] = pd.Timestamp.utcnow().isoformat()
+        unified["ingested_at"] = pd.Timestamp.now(tz="UTC").isoformat()
         logger.info(
             "Unified frame built: %d zones, %d with active fire nearby",
             len(unified), int(unified["active_fire_nearby"].sum()),
@@ -152,7 +152,12 @@ class DataIngestionModule:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    module = DataIngestionModule(offline=True)
+    use_offline = not bool(API.firms_map_key)
+    if use_offline:
+        logger.info("No FIRMS_MAP_KEY found - running in offline/synthetic mode.")
+    else:
+        logger.info("FIRMS_MAP_KEY found - fetching real satellite data.")
+    module = DataIngestionModule(offline=use_offline)
     df = module.build_unified_frame()
     print(df.head(10))
     print(f"\nShape: {df.shape}")
