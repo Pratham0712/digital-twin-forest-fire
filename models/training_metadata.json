@@ -1,0 +1,30 @@
+{
+  "n_samples": 1400,
+  "n_features": 12,
+  "positive_rate": 0.15214285714285714,
+  "feature_columns": [
+    "wx_temperature_c",
+    "wx_humidity_pct",
+    "wx_wind_speed_ms",
+    "wx_precipitation_mm",
+    "ffmc",
+    "dmc",
+    "dc",
+    "bui",
+    "fwi",
+    "ndvi",
+    "fire_frp",
+    "active_fire_nearby"
+  ],
+  "sequence_features": [
+    "ffmc",
+    "dmc",
+    "dc",
+    "bui",
+    "fwi",
+    "ndvi",
+    "wx_temperature_c",
+    "wx_humidity_pct"
+  ],
+  "offline_mode": true
+}
