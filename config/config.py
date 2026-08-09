@@ -41,7 +41,8 @@ class RegionConfig:
     max_lat: float = 15.5
     min_lon: float = 74.0
     max_lon: float = 77.5
-    grid_resolution_deg: float = 0.1  # ~11 km grid cells
+    grid_resolution_deg: float = 0.1  # ~11 km grid cells - used for fire detection + CA sim
+    weather_grid_resolution_deg: float = 0.5  # ~55 km - weather is spatially smoother, fetched sparser
 
 
 @dataclass

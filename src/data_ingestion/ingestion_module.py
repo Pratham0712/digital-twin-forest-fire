@@ -47,6 +47,28 @@ def build_region_grid(region=REGION) -> pd.DataFrame:
     return grid
 
 
+def build_weather_grid(region=REGION) -> pd.DataFrame:
+    """
+    Builds a much coarser grid purely for weather API calls. Weather fields
+    (temperature, humidity, wind) vary smoothly over tens of kilometres, so
+    querying at the same 11km resolution as the fire-detection grid wastes
+    API quota for no accuracy gain - at 1,400 fire-grid cells this would burn
+    through OpenWeatherMap's free-tier 1,000 calls/day limit in a single
+    refresh. This grid is nearest-neighbor joined onto the fine grid in
+    DataIngestionModule._nearest_neighbor_join, the same technique already
+    used for fire hotspots.
+    """
+    lats = np.arange(region.min_lat, region.max_lat, region.weather_grid_resolution_deg)
+    lons = np.arange(region.min_lon, region.max_lon, region.weather_grid_resolution_deg)
+    rows = [{"latitude": lat + region.weather_grid_resolution_deg / 2,
+             "longitude": lon + region.weather_grid_resolution_deg / 2}
+            for lat in lats for lon in lons]
+    grid = pd.DataFrame(rows)
+    logger.info("Built weather grid: %d points (coarse, %.1f deg spacing)",
+                len(grid), region.weather_grid_resolution_deg)
+    return grid
+
+
 class DataIngestionModule:
     """
     Public entry point for Layer 1 (Data Acquisition) of the five-layer
@@ -59,6 +81,7 @@ class DataIngestionModule:
         self.firms = FIRMSClient(API.firms_map_key, API.firms_base_url, API.firms_source)
         self.weather = WeatherClient(API.owm_api_key, API.owm_base_url)
         self.grid = build_region_grid()
+        self.weather_grid = build_weather_grid()
 
     def fetch_fire_hotspots(self) -> pd.DataFrame:
         if self.offline or not API.firms_map_key:
@@ -73,7 +96,7 @@ class DataIngestionModule:
         )
 
     def fetch_weather(self) -> pd.DataFrame:
-        grid_points = self.grid[["latitude", "longitude"]].to_dict("records")
+        grid_points = self.weather_grid[["latitude", "longitude"]].to_dict("records")
         if self.offline or not API.owm_api_key:
             return WeatherClient.generate_sample(grid_points)
         return self.weather.fetch_grid(grid_points)

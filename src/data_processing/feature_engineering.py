@@ -144,7 +144,7 @@ class DataProcessor:
     ]
 
     def __init__(self, month: Optional[int] = None):
-        self.month = month or pd.Timestamp.utcnow().month
+        self.month = month or pd.Timestamp.now(tz="UTC").month
 
     def transform(self, unified: pd.DataFrame) -> pd.DataFrame:
         df = unified.copy()
