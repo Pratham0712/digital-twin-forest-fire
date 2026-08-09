@@ -1,0 +1,27 @@
+{
+  "train_rows": 424200,
+  "test_rows": 211400,
+  "train_date_range": [
+    "2023-01-01",
+    "2024-05-31"
+  ],
+  "test_date_range": [
+    "2025-01-01",
+    "2025-05-31"
+  ],
+  "train_positive_rate": 0.06274163130598774,
+  "test_positive_rate": 0.0639120151371807,
+  "feature_columns": [
+    "wx_temperature_c",
+    "wx_humidity_pct",
+    "wx_wind_speed_ms",
+    "wx_precipitation_mm",
+    "ffmc",
+    "dmc",
+    "dc",
+    "bui",
+    "fwi",
+    "ndvi"
+  ],
+  "split_method": "temporal - train 2023-2024, test 2025 (held-out year)"
+}

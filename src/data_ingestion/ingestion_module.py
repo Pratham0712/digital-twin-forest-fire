@@ -154,10 +154,16 @@ class DataIngestionModule:
         )
 
         if not hotspots.empty:
+            # VIIRS sources (our default) name this column 'bright_ti4';
+            # older MODIS sources use 'brightness'. Detect whichever is
+            # present so this works regardless of API.firms_source.
+            brightness_col = "bright_ti4" if "bright_ti4" in hotspots.columns else "brightness"
             unified = self._nearest_neighbor_join(
-                unified, hotspots, ["frp", "confidence", "brightness"],
+                unified, hotspots, ["frp", "confidence", brightness_col],
                 prefix="fire", max_distance_deg=REGION.grid_resolution_deg * 0.75,
             )
+            if brightness_col != "brightness":
+                unified = unified.rename(columns={f"fire_{brightness_col}": "fire_brightness"})
             unified["active_fire_nearby"] = unified["fire_distance_deg"].notna()
         else:
             unified["fire_frp"] = np.nan

@@ -27,7 +27,7 @@ class FIRMSClient:
     """
 
     EXPECTED_COLUMNS = [
-        "latitude", "longitude", "brightness", "scan", "track",
+        "latitude", "longitude", "bright_ti4", "scan", "track",
         "acq_date", "acq_time", "satellite", "confidence", "version",
         "bright_t31", "frp", "daynight",
     ]
@@ -107,7 +107,7 @@ class FIRMSClient:
         df = pd.DataFrame({
             "latitude": rng.uniform(region_bounds["min_lat"], region_bounds["max_lat"], n),
             "longitude": rng.uniform(region_bounds["min_lon"], region_bounds["max_lon"], n),
-            "brightness": rng.uniform(300, 400, n),
+            "bright_ti4": rng.uniform(300, 400, n),
             "scan": rng.uniform(0.3, 1.5, n),
             "track": rng.uniform(0.3, 1.5, n),
             "acq_date": [datetime.now(timezone.utc).date().isoformat()] * n,
