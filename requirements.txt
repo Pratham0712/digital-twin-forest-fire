@@ -11,4 +11,5 @@ folium>=0.16
 streamlit-folium>=0.20
 geopandas>=0.14
 python-dotenv>=1.0
+meteostat>=2.1
 pytest>=8.0

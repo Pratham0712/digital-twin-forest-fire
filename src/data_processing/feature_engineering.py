@@ -111,7 +111,14 @@ def compute_fwi(ffmc: np.ndarray, bui: np.ndarray, wind_ms: np.ndarray) -> np.nd
     fd = np.where(bui <= 80, 0.626 * bui ** 0.809 + 2,
                   1000 / (25 + 108.64 * np.exp(-0.023 * bui)))
     b = 0.1 * isi * fd
-    fwi = np.where(b <= 1, b, np.exp(2.72 * (0.434 * np.log(b.clip(min=1e-6))) ** 0.647))
+    # np.where evaluates BOTH branches for every element before selecting -
+    # for rows where b<=1 (which take the first branch), the second branch's
+    # log(b)**0.647 can hit a negative base and warn "invalid value in power"
+    # even though that value is discarded. Suppress just this expected,
+    # harmless warning rather than the b<=1 rows' correct results.
+    with np.errstate(invalid="ignore"):
+        b_high = np.exp(2.72 * (0.434 * np.log(b.clip(min=1e-6))) ** 0.647)
+    fwi = np.where(b <= 1, b, b_high)
     return np.clip(fwi, 0, None)
 
 
