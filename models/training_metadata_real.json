@@ -9,8 +9,8 @@
     "2025-01-01",
     "2025-05-31"
   ],
-  "train_positive_rate": 0.06274163130598774,
-  "test_positive_rate": 0.0639120151371807,
+  "train_positive_rate": 0.044332861857614335,
+  "test_positive_rate": 0.04639072847682119,
   "feature_columns": [
     "wx_temperature_c",
     "wx_humidity_pct",
@@ -21,7 +21,10 @@
     "dc",
     "bui",
     "fwi",
-    "ndvi"
+    "ndvi",
+    "month",
+    "day_of_year",
+    "fwi_lag1"
   ],
-  "split_method": "temporal - train 2023-2024, test 2025 (held-out year)"
+  "split_method": "temporal - train 2023-2024, test 2025 (held-out year); fwi_lag1 replaces fwi_roll7 to avoid train/inference mismatch"
 }
