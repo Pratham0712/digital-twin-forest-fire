@@ -76,29 +76,37 @@ class DataIngestionModule:
     observations into one grid-indexed DataFrame ready for feature engineering.
     """
 
-    def __init__(self, offline: bool = False):
+    def __init__(self, offline: bool = False, scenario: Optional[dict] = None, region=None):
         self.offline = offline
+        self.scenario = scenario or {}
+        self.region = region or REGION
         self.firms = FIRMSClient(API.firms_map_key, API.firms_base_url, API.firms_source)
         self.weather = WeatherClient(API.owm_api_key, API.owm_base_url)
-        self.grid = build_region_grid()
-        self.weather_grid = build_weather_grid()
+        self.grid = build_region_grid(self.region)
+        self.weather_grid = build_weather_grid(self.region)
 
     def fetch_fire_hotspots(self) -> pd.DataFrame:
         if self.offline or not API.firms_map_key:
             return FIRMSClient.generate_sample(
-                {"min_lat": REGION.min_lat, "max_lat": REGION.max_lat,
-                 "min_lon": REGION.min_lon, "max_lon": REGION.max_lon},
-                n_points=8,
+                {"min_lat": self.region.min_lat, "max_lat": self.region.max_lat,
+                 "min_lon": self.region.min_lon, "max_lon": self.region.max_lon},
+                n_points=self.scenario.get("n_hotspots", 8),
+                seed=self.scenario.get("seed", 42),
             )
         return self.firms.fetch_hotspots(
-            REGION.min_lat, REGION.min_lon, REGION.max_lat, REGION.max_lon,
+            self.region.min_lat, self.region.min_lon, self.region.max_lat, self.region.max_lon,
             API.firms_day_range,
         )
 
     def fetch_weather(self) -> pd.DataFrame:
         grid_points = self.weather_grid[["latitude", "longitude"]].to_dict("records")
         if self.offline or not API.owm_api_key:
-            return WeatherClient.generate_sample(grid_points)
+            return WeatherClient.generate_sample(
+                grid_points,
+                temp_c=self.scenario.get("temp_c"),
+                wind_speed_ms=self.scenario.get("wind_speed_ms"),
+                humidity_pct=self.scenario.get("humidity_pct"),
+            )
         return self.weather.fetch_grid(grid_points)
 
     @staticmethod
@@ -160,7 +168,7 @@ class DataIngestionModule:
             brightness_col = "bright_ti4" if "bright_ti4" in hotspots.columns else "brightness"
             unified = self._nearest_neighbor_join(
                 unified, hotspots, ["frp", "confidence", brightness_col],
-                prefix="fire", max_distance_deg=REGION.grid_resolution_deg * 0.75,
+                prefix="fire", max_distance_deg=self.region.grid_resolution_deg * 0.75,
             )
             if brightness_col != "brightness":
                 unified = unified.rename(columns={f"fire_{brightness_col}": "fire_brightness"})

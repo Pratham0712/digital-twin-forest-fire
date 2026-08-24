@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_trained_model():
-    model_path = MODELS_DIR / "xgboost.json"
+    model_path = MODELS_DIR / "xgboost_real.json"
     if not model_path.exists():
         logger.warning("No trained model found at %s - twin will use FWI-based risk fallback. "
                         "Run 'python src/ml_models/train.py' first for ML-based predictions.", model_path)
@@ -42,8 +42,8 @@ def run_pipeline(retrain: bool = False):
 
     if retrain:
         logger.info("Retraining models before running the pipeline...")
-        from src.ml_models.train import main as train_main
-        train_main(offline=not bool(API.firms_map_key))
+        from src.ml_models.train_real import main as train_main
+        train_main()
 
     model = load_trained_model()
     use_offline = not bool(API.firms_map_key)

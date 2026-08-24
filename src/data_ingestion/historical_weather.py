@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # RHUM from hourly aggregation.
 REQUIRED_PARAMETERS = [
     Parameter.TEMP, Parameter.RHUM, Parameter.PRCP,
-    Parameter.WSPD, Parameter.WDIR, Parameter.PRES,
+    Parameter.WSPD, Parameter.PRES,
 ]
 PROVIDERS = [Provider.DAILY, Provider.DAILY_DERIVED]
 

@@ -50,7 +50,7 @@ class SystemConfig:
     # SRS 5.1 Data Ingestion
     min_refresh_interval_minutes: int = 15
     # SRS 5.1 Alert System
-    alert_threshold_pct: float = 70.0
+    alert_threshold_pct: float = 40.0
     # SRS 5.2 Performance
     max_processing_latency_sec: int = 30
     ca_grid_max_seconds: int = 5

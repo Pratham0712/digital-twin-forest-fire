@@ -61,10 +61,10 @@ class AlertEngine:
     dashboard and report use identical language.
     """
     SEVERITY_BANDS = [
-        (0.90, "EXTREME"),
-        (0.70, "HIGH"),
-        (0.40, "MODERATE"),
-        (0.0, "LOW"),
+        (0.60, "EXTREME"),
+        (0.40, "HIGH"),
+        (0.20, "MODERATE"),
+        (0.0,  "LOW"),
     ]
 
     def __init__(self, threshold_pct: float = SYSTEM.alert_threshold_pct):
@@ -109,23 +109,31 @@ class DigitalTwin:
     snapshot. Matches Scenario 1 (SRS 6.2.4) end-to-end.
     """
 
-    def __init__(self, ml_model=None, offline: bool = True):
+    def __init__(self, ml_model=None, offline: bool = True, use_real_model: bool = True,
+                 scenario: Optional[dict] = None, region=None):
         """
         ml_model: any fitted model exposing .predict(X) -> (labels, probs),
         e.g. model_trainer.RandomForestModel or XGBoostModel. If None, the
         twin falls back to using FWI-normalised risk (still principled, just
         not learned) so the twin is usable before model training is run.
+        use_real_model: True (default) if ml_model was loaded from a
+        *_real.* file (e.g. xgboost_real.json) - builds the matching
+        10-column feature matrix instead of the old 12-column demo one.
+        Set False only if you deliberately pass a demo-mode model
+        (models/xgboost.json etc.).
         """
         self.offline = offline
-        self.ingestion = DataIngestionModule(offline=offline)
+        self.region = region or REGION
+        self.ingestion = DataIngestionModule(offline=offline, scenario=scenario, region=self.region)
         self.processor = DataProcessor()
         self.alert_engine = AlertEngine()
         self.ml_model = ml_model
+        self.use_real_model = use_real_model
         self.current_snapshot: Optional[TwinSnapshot] = None
 
     def _compute_risk_scores(self, processed: pd.DataFrame) -> np.ndarray:
         if self.ml_model is not None:
-            X, _ = self.processor.get_feature_matrix(processed)
+            X, _ = self.processor.get_feature_matrix(processed, real=self.use_real_model)
             _, probs = self.ml_model.predict(X)
             return probs
         # Fallback: normalise FWI into a pseudo-probability so the twin is
@@ -137,6 +145,22 @@ class DigitalTwin:
         """Full pipeline refresh - call this on the SYSTEM.min_refresh_interval_minutes cadence."""
         unified = self.ingestion.build_unified_frame()
         processed = self.processor.transform(unified)
+
+        # Inject previous FWI as fwi_lag1 so the real model gets a genuine
+        # lag feature instead of a fwi copy. On the very first refresh there
+        # is no previous snapshot, so fwi_lag1 falls back to fwi (handled
+        # inside DataProcessor.transform via df.get("_prev_fwi", df["fwi"])).
+        if self.current_snapshot is not None:
+            prev_fwi = (
+                self.current_snapshot.processed_grid
+                .set_index("zone_id")["fwi"]
+                .reindex(processed["zone_id"])
+                .fillna(processed["fwi"])
+                .values
+            )
+            processed["_prev_fwi"] = prev_fwi
+            processed["fwi_lag1"] = prev_fwi
+
         risk_scores = self._compute_risk_scores(processed)
         alerts = self.alert_engine.generate_alerts(processed, risk_scores)
 
@@ -208,7 +232,7 @@ class DigitalTwin:
         return {
             "status": "ok",
             "timestamp": snap.timestamp,
-            "region": REGION.name,
+            "region": self.region.name,
             "total_zones": len(snap.processed_grid),
             "total_alerts": len(snap.alerts),
             "severity_breakdown": severity_counts,

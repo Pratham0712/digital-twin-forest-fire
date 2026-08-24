@@ -95,7 +95,7 @@ class FIRMSClient:
 
     @staticmethod
     def generate_sample(region_bounds: dict, n_points: int = 25,
-                         seed: Optional[int] = 42) -> pd.DataFrame:
+                         seed: Optional[int] = None) -> pd.DataFrame:
         """
         Synthetic hotspot generator used for offline development, unit tests,
         and demo mode when no FIRMS_MAP_KEY / internet access is available.

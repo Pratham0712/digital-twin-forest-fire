@@ -36,13 +36,13 @@ from scipy.spatial import cKDTree
 from config.config import REGION, DATA_RAW_DIR, DATA_PROCESSED_DIR
 from src.data_ingestion.ingestion_module import build_region_grid
 from src.data_processing.feature_engineering import (
-    compute_ffmc, compute_dmc, compute_dc, compute_bui, compute_fwi, synthetic_ndvi,
+    compute_ffmc, compute_dmc, compute_dc, compute_bui, compute_fwi, synthetic_ndvi_independent,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-FIRE_MATCH_RADIUS_DEG = REGION.grid_resolution_deg * 0.75  # same threshold used in live ingestion
+FIRE_MATCH_RADIUS_DEG = REGION.grid_resolution_deg * 0.7  # tightened: 1.5x was too wide and created false-positive labels in adjacent cells; 0.7x keeps only cells where the hotspot centroid is genuinely inside the cell
 
 
 def load_real_fires() -> pd.DataFrame:
@@ -101,15 +101,28 @@ def build_dataset() -> pd.DataFrame:
         bui = compute_bui(dmc, dc)
         fwi = compute_fwi(ffmc, bui, wind)
 
-        # Real label: did a fire actually occur in this zone on this date?
+        # Real label: did a CONFIDENT fire actually occur in this zone on this date?
+        # Filter to high-confidence detections only (confidence >= 50 for VIIRS nominal/high;
+        # this removes low-confidence detections that are often cloud edges or agricultural burns
+        # misclassified as forest fires, which are a major source of false-positive labels).
         day_fires = fires[fires["acq_date"] == day]
+        if "confidence" in day_fires.columns:
+            conf_raw = day_fires["confidence"].astype(str).str.strip().str.lower()
+            # VIIRS_SNPP_SP uses string confidence: 'l'=low, 'n'=nominal, 'h'=high
+            # Keep nominal and high; drop low-confidence detections only.
+            # If values are numeric (some MODIS sources), keep >= 30.
+            is_string_conf = conf_raw.isin(["l", "n", "h"])
+            if is_string_conf.any():
+                day_fires = day_fires[conf_raw.isin(["n", "h"])]
+            else:
+                day_fires = day_fires[pd.to_numeric(conf_raw, errors="coerce").fillna(0) >= 30]
         label = np.zeros(len(grid), dtype=int)
         if not day_fires.empty:
             fire_tree = cKDTree(day_fires[["latitude", "longitude"]].values)
             dist, _ = fire_tree.query(grid_coords, k=1)
             label = (dist <= FIRE_MATCH_RADIUS_DEG).astype(int)
 
-        ndvi = synthetic_ndvi(label.astype(bool), rain, seed=hash(str(day)) % (2**31))
+        ndvi = synthetic_ndvi_independent(grid["zone_id"].values, rain)
 
         day_df = pd.DataFrame({
             "zone_id": grid["zone_id"].values,

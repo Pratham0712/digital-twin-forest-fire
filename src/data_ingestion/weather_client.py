@@ -118,18 +118,25 @@ class WeatherClient:
         return pd.DataFrame(columns=cols)
 
     @staticmethod
-    def generate_sample(grid_points: List[dict], seed: Optional[int] = 7) -> pd.DataFrame:
-        """Synthetic weather generator for offline dev/tests/demo mode."""
+    def generate_sample(grid_points: List[dict], seed: Optional[int] = None,
+                         temp_c: Optional[float] = None,
+                         wind_speed_ms: Optional[float] = None,
+                         humidity_pct: Optional[float] = None) -> pd.DataFrame:
+        """Synthetic weather generator. Pass temp_c/wind_speed_ms/humidity_pct
+        to center the spread around a chosen scenario value."""
         import numpy as np
         rng = np.random.default_rng(seed)
         n = len(grid_points)
+        temp_lo, temp_hi = (22, 42) if temp_c is None else (temp_c - 4, temp_c + 4)
+        wind_lo, wind_hi = (0.5, 12) if wind_speed_ms is None else (max(0.0, wind_speed_ms - 2), wind_speed_ms + 2)
+        hum_lo, hum_hi = (8, 85) if humidity_pct is None else (max(0.0, humidity_pct - 10), min(100.0, humidity_pct + 10))
         df = pd.DataFrame({
             "latitude": [p["latitude"] for p in grid_points],
             "longitude": [p["longitude"] for p in grid_points],
-            "temperature_c": rng.uniform(22, 42, n),
-            "humidity_pct": rng.uniform(8, 85, n),
+            "temperature_c": rng.uniform(temp_lo, temp_hi, n),
+            "humidity_pct": rng.uniform(hum_lo, hum_hi, n),
             "pressure_hpa": rng.uniform(1005, 1015, n),
-            "wind_speed_ms": rng.uniform(0.5, 12, n),
+            "wind_speed_ms": rng.uniform(wind_lo, wind_hi, n),
             "wind_deg": rng.uniform(0, 360, n),
             "precipitation_mm": rng.choice([0, 0, 0, 0.5, 2.0], n),
             "clouds_pct": rng.integers(0, 100, n),

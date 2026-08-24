@@ -137,6 +137,17 @@ def synthetic_ndvi(active_fire_nearby: np.ndarray, rain_mm: np.ndarray,
     return np.clip(base, -1, 1)
 
 
+def synthetic_ndvi_independent(zone_ids, rain_mm):
+    """
+    NDVI proxy for REAL historical training data (Bug 5 fix). Must NEVER
+    see the fire label - depends only on a fixed per-zone baseline plus
+    real rainfall, with zero reference to fire occurrence.
+    """
+    base = np.array([0.35 + 0.40 * ((hash(str(z)) % 1000) / 1000.0) for z in zone_ids])
+    base = np.where(rain_mm > 1.0, np.clip(base * 1.1, 0, 0.9), base)
+    return np.clip(base, -1, 1)
+
+
 class DataProcessor:
     """
     Layer 2 (Data Processing) of the five-layer architecture (Report 6.1.1).
@@ -148,6 +159,17 @@ class DataProcessor:
         "wx_temperature_c", "wx_humidity_pct", "wx_wind_speed_ms",
         "wx_precipitation_mm", "ffmc", "dmc", "dc", "bui", "fwi", "ndvi",
         "fire_frp", "active_fire_nearby",
+    ]
+
+    # Matches FEATURE_COLUMNS in src/ml_models/train_real.py exactly (order
+    # matters for XGBoost). The real-data models (xgboost_real.json etc.)
+    # were trained without fire_frp/active_fire_nearby - those two columns
+    # only exist in the old demo/offline pipeline (Bug 3/4 era, see
+    # project_state.pdf Sec. 7) and must never be fed to the real models.
+    REAL_FEATURE_COLUMNS = [
+        "wx_temperature_c", "wx_humidity_pct", "wx_wind_speed_ms",
+        "wx_precipitation_mm", "ffmc", "dmc", "dc", "bui", "fwi", "ndvi",
+        "month", "day_of_year", "fwi_lag1",
     ]
 
     def __init__(self, month: Optional[int] = None):
@@ -174,7 +196,18 @@ class DataProcessor:
         df["dc"] = compute_dc(temp, rain, month=self.month)
         df["bui"] = compute_bui(df["dmc"].values, df["dc"].values)
         df["fwi"] = compute_fwi(df["ffmc"].values, df["bui"].values, wind)
-        df["ndvi"] = synthetic_ndvi(df["active_fire_nearby"].values, rain)
+        df["ndvi"] = synthetic_ndvi_independent(df["zone_id"].values, rain)
+
+        # Temporal features (match train_real.py FEATURE_COLUMNS)
+        now = pd.Timestamp.now(tz="UTC")
+        df["month"] = self.month
+        df["day_of_year"] = now.day_of_year
+        # fwi_lag1: at live inference there's only one snapshot, so we use
+        # the previous snapshot's FWI stored in twin state if available,
+        # otherwise fall back to today's FWI (same as lag=0, conservative).
+        # This is honest: fwi_roll7 was always equal to fwi at inference
+        # (min_periods=1 on a single row), making it a useless duplicate.
+        df["fwi_lag1"] = df.get("_prev_fwi", df["fwi"])
 
         # Weather-derived fire-risk label for supervised training when ground-truth
         # fire occurrence isn't available: a zone is "fire" if it currently has an
@@ -188,9 +221,18 @@ class DataProcessor:
         )
         return df
 
-    def get_feature_matrix(self, processed: pd.DataFrame):
-        X = processed[self.FEATURE_COLUMNS].copy()
-        X["active_fire_nearby"] = X["active_fire_nearby"].astype(int)
+    def get_feature_matrix(self, processed: pd.DataFrame, real: bool = False):
+        """
+        real=False (default): demo/offline 12-column matrix, for train.py
+        and the synthetic-mode pipeline. Unchanged behaviour.
+        real=True: 10-column matrix matching the real-data models
+        (xgboost_real.json / random_forest_real.pkl / cnn_lstm_real.keras).
+        Use this whenever ml_model was loaded from a *_real.* file.
+        """
+        cols = self.REAL_FEATURE_COLUMNS if real else self.FEATURE_COLUMNS
+        X = processed[cols].copy()
+        if "active_fire_nearby" in X.columns:
+            X["active_fire_nearby"] = X["active_fire_nearby"].astype(int)
         y = processed["fire_risk_label"]
         return X, y
 

@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 FEATURE_COLUMNS = [
     "wx_temperature_c", "wx_humidity_pct", "wx_wind_speed_ms", "wx_precipitation_mm",
     "ffmc", "dmc", "dc", "bui", "fwi", "ndvi",
+    "month", "day_of_year", "fwi_lag1",
 ]
 TEST_SEASON_START = pd.Timestamp("2025-01-01")
 
@@ -50,6 +51,20 @@ def load_real_dataset() -> pd.DataFrame:
         )
     df = pd.read_csv(path)
     df["date"] = pd.to_datetime(df["date"])
+    # Temporal features: fire risk is strongly seasonal in Karnataka
+    df["month"] = df["date"].dt.month
+    df["day_of_year"] = df["date"].dt.dayofyear
+    # 7-day rolling FWI trend per zone: captures "FWI rising for 3 days" signal
+    # that the tabular models can't see from a single snapshot
+    df = df.sort_values(["zone_id", "date"])
+    # fwi_lag1: yesterday's FWI per zone - captures "FWI rising" signal without
+    # the train/inference mismatch of fwi_roll7 (which collapses to fwi at inference
+    # time since there's only one snapshot). lag1 is honest: at inference we use
+    # the previous snapshot's FWI stored in twin state.
+    df["fwi_lag1"] = (
+        df.groupby("zone_id")["fwi"]
+        .transform(lambda s: s.shift(1).fillna(s))
+    )
     return df
 
 
@@ -104,15 +119,15 @@ def main():
 
     results = {}
 
-    logger.info("=== Random Forest (real data) ===")
-    rf = RandomForestModel().fit(X_train, y_train)
+    logger.info("=== Random Forest (real data, tuned) ===")
+    rf = RandomForestModel().fit(X_train, y_train, tune=True)
     results["Random Forest"] = rf.evaluate(X_test, y_test)
     logger.info("RF: %s", results["Random Forest"])
     with open(MODELS_DIR / "random_forest_real.pkl", "wb") as f:
         pickle.dump(rf.model, f)
 
-    logger.info("=== XGBoost (real data) ===")
-    xgb_model = XGBoostModel().fit(X_train, y_train)
+    logger.info("=== XGBoost (real data, tuned) ===")
+    xgb_model = XGBoostModel().fit(X_train, y_train, tune=True)
     results["XGBoost"] = xgb_model.evaluate(X_test, y_test)
     logger.info("XGBoost: %s", results["XGBoost"])
     xgb_model.model.save_model(str(MODELS_DIR / "xgboost_real.json"))
@@ -129,7 +144,7 @@ def main():
         )
     else:
         cnn_lstm = CNNLSTMModel(n_days=X_seq_train.shape[1], n_features=X_seq_train.shape[2])
-        cnn_lstm.fit(X_seq_train, y_seq_train, epochs=25, verbose=0)
+        cnn_lstm.fit(X_seq_train, y_seq_train, epochs=50, verbose=1)
         results["CNN+LSTM"] = cnn_lstm.evaluate(X_seq_test, y_seq_test)
         logger.info("CNN+LSTM: %s", results["CNN+LSTM"])
         cnn_lstm.model.save(str(MODELS_DIR / "cnn_lstm_real.keras"))
@@ -151,7 +166,7 @@ def main():
             "train_positive_rate": float(train_df["fire_risk_label"].mean()),
             "test_positive_rate": float(test_df["fire_risk_label"].mean()),
             "feature_columns": FEATURE_COLUMNS,
-            "split_method": "temporal - train 2023-2024, test 2025 (held-out year)",
+            "split_method": "temporal - train 2023-2024, test 2025 (held-out year); fwi_lag1 replaces fwi_roll7 to avoid train/inference mismatch",
         }, f, indent=2)
 
     print(f"\nModels saved to: {MODELS_DIR} (suffixed _real)")
