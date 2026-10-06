@@ -80,6 +80,15 @@ class SystemConfig:
     focus_size_m: int = 500
     local_ca_cell_m: int = 25
     local_ca_base_spread_prob: float = 0.8
+    # User-configurable simulation area (What-If / Spread Simulation). The CA
+    # domain is the area plus a margin of (steps + 1) cells, so the fire is
+    # limited by the simulated duration, never by the drawn box.
+    focus_min_m: int = 100
+    focus_max_m: int = 3000
+    local_cell_options_m: tuple = (5, 10, 25, 50)
+    max_domain_cells: int = 240          # cells per side of the CA domain (browser + CA cost)
+    max_duration_minutes: int = 240
+    duration_presets_minutes: tuple = (1, 5, 10, 15, 30, 60, 120)
 
 
 API = APIConfig()

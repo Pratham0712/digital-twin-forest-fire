@@ -22,7 +22,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 import streamlit as st
 
 from src.dashboard.dashboard_common import (
-    set_page, build_sidebar, ensure_twin, render_header, render_kpi_row,
+    set_page, build_sidebar, ensure_twin, render_platform_hero, render_kpi_row,
     render_risk_map, render_risk_gauge, render_alerts, page_nav_card,
     render_autorefresh_status,
 )
@@ -37,7 +37,7 @@ twin = ensure_twin(offline, scenario, region, force_refresh)
 snap = twin.current_snapshot
 summary = twin.get_summary()
 
-render_header(summary, offline, "Command Center", region=twin.region)
+render_platform_hero(summary, offline, region=twin.region)
 render_autorefresh_status(offline, scenario, region)
 render_kpi_row(summary)
 

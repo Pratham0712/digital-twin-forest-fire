@@ -23,7 +23,8 @@ from src.dashboard.dashboard_common import (
     set_page, build_sidebar, ensure_twin, get_twin, render_header,
     render_ca_simulation, render_scenario_controls, log_action, _region_key,
 )
-from src.dashboard.geo_spread import SPREAD_MODES, render_applied_scenario_bar, render_geo_spread
+from src.dashboard.geo_spread import (SPREAD_MODES, default_setup, get_setup, render_applied_scenario_bar,
+                                     render_geo_spread)
 from src.data_ingestion.wind import mean_wind
 
 from src.auth.auth_gate import require_login, render_user_badge_in_sidebar
@@ -74,37 +75,34 @@ if mode == SPREAD_MODES[0]:
                 sim_twin.refresh()
             st.session_state["_sim_twin"] = sim_twin
         render_applied_scenario_bar(cfg)
+        if "setup" not in cfg:                       # scenario applied by an older version of the page
+            cfg["setup"] = {**default_setup(sim_twin), "region": sim_twin.region.name}
         render_geo_spread(sim_twin, key_prefix="applied", wind_speed_ms=float(cfg["wind_speed_ms"]),
                           wind_from_deg=float(cfg["wind_from_deg"]), wind_label="Scenario wind",
-                          focus_choice=cfg["focus_choice"])
+                          setup=cfg["setup"], scenario=cfg.get("scenario"))
         _regional_projection(sim_twin, "applied_ca")
 
 elif mode == SPREAD_MODES[1]:
     st.caption("Seeded from the same live/demo Digital Twin state as the Command Center.")
-    from src.simulation.local_spread import (DEFAULT_FOCUS, focus_options_for_region, resolve_focus,
-                                             zone_conditions)
+    from src.simulation.local_spread import zone_conditions
     snap = twin.current_snapshot
-    opts = focus_options_for_region(twin.region)
-    choice = st.session_state.get("current_focus")
-    if choice not in opts:
-        choice = DEFAULT_FOCUS if DEFAULT_FOCUS in opts else opts[0]
-    focus = resolve_focus(choice, snap.processed_grid, snap.risk_scores)
+    setup = get_setup(twin, kp="current_set")
     # Wind at the focus zone: the OpenWeatherMap forecast near it when live (same
     # source the regional CA uses), otherwise the zone's current wind.
-    lat, lon = focus.lat, focus.lon
+    lat, lon = setup["location"]["lat"], setup["location"]["lon"]
     cond = zone_conditions(snap.processed_grid, snap.risk_scores, lat, lon)
     schedule, label = None, "Current wind"
     w_speed, w_from = cond["wind_speed_ms"], cond["wind_from_deg"]
     try:
         mask = (snap.processed_grid["zone_id"] == cond["zone_id"]).values
-        sched, wind = twin._spread_wind(snap.processed_grid, mask, 120, 15)
+        sched, wind = twin._spread_wind(snap.processed_grid, mask, int(max(15, setup["duration_min"])), 15)
         w_speed, w_from = float(wind["speed_ms"]), float(wind["from_deg"])
         if sched:
             schedule, label = sched, "Forecast wind"
     except Exception:
         w_speed, w_from = mean_wind([cond["wind_speed_ms"]], [cond["wind_from_deg"]])
     render_geo_spread(twin, key_prefix="current", wind_speed_ms=w_speed, wind_from_deg=w_from,
-                      wind_label=label, wind_schedule_15min=schedule)
+                      wind_label=label, setup=setup, wind_schedule_15min=schedule)
     _regional_projection(twin, "ca")
 
 else:
@@ -140,5 +138,6 @@ else:
         f"**{scn_summary.get('max_risk_score', 0):.0%}**."
     )
     render_geo_spread(scn_twin, key_prefix="custom", wind_speed_ms=float(scenario_vals["wind_speed_ms"]),
-                      wind_from_deg=float(scenario_vals["wind_from_deg"]), wind_label="Scenario wind")
+                      wind_from_deg=float(scenario_vals["wind_from_deg"]), wind_label="Scenario wind",
+                      setup=get_setup(scn_twin, kp="custom_set"), scenario=scenario_vals)
     _regional_projection(scn_twin, "custom_scn")

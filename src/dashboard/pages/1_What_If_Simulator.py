@@ -20,7 +20,8 @@ from src.dashboard.dashboard_common import (
 )
 
 from src.auth.auth_gate import require_login, render_user_badge_in_sidebar
-from src.dashboard.geo_spread import render_focus_selector, apply_and_open_spread
+from src.dashboard.geo_spread import (apply_and_open_spread, get_setup, render_setup_controls,
+                                     render_setup_map, render_setup_summary)
 
 set_page("What-If Simulator")
 require_login()
@@ -46,40 +47,54 @@ st.caption(
     "yourself and press **Apply scenario** when ready."
 )
 scenario, just_applied_preset = render_scenario_controls("wi")
-focus_choice = render_focus_selector(region, key="wi_focus")
-
-b_apply, b_open = st.columns(2)
-run = b_apply.button("Apply scenario", use_container_width=True)
-open_spread = b_open.button("Apply Scenario & Open Spread Simulation", type="primary",
-                            use_container_width=True)
-run = run or open_spread
 
 region_sig = (region.name, region.min_lat, region.max_lat, region.min_lon, region.max_lon)
-need_recompute = (
-    run or just_applied_preset or "_wi_twin" not in st.session_state
-    or st.session_state.get("_wi_scenario") != scenario
-    or st.session_state.get("_wi_region") != region_sig
-)
-if need_recompute:
+
+
+def _recompute(log: bool):
     with st.spinner("Recomputing risk across the region for this scenario..."):
         wi_twin = get_twin(offline=True, scenario=scenario, region=region)
         wi_twin.refresh()
     st.session_state["_wi_twin"] = wi_twin
     st.session_state["_wi_scenario"] = scenario
     st.session_state["_wi_region"] = region_sig
-    if run or just_applied_preset:
+    if log:
         _s = wi_twin.get_summary()
         log_action("scenario", f"What-If applied: {scenario.get('temp_c')}°C, "
-                   f"{scenario.get('wind_speed_ms')} m/s wind, {scenario.get('humidity_pct')}% humidity, "
+                   f"{scenario.get('wind_speed_ms')} m/s wind from {scenario.get('wind_from_deg')}°, "
+                   f"{scenario.get('humidity_pct')}% humidity, "
                    f"{scenario.get('n_hotspots')} hotspots -> {_s.get('total_alerts', 0)} alerts, "
                    f"peak risk {_s.get('max_risk_score', 0):.0%}", wi_twin.region.name)
     # A new scenario invalidates any spread simulation run from the old one.
     st.session_state["wi_ca_history"] = None
 
+
+if (just_applied_preset or "_wi_twin" not in st.session_state
+        or st.session_state.get("_wi_scenario") != scenario
+        or st.session_state.get("_wi_region") != region_sig):
+    _recompute(log=just_applied_preset)
 twin = st.session_state["_wi_twin"]
+
+# ── simulation set-up: location, area, cell size, duration, ignition ──
+st.markdown('<div class="sec-hdr">Simulation set-up</div>', unsafe_allow_html=True)
+setup = get_setup(twin, kp="wi_setup")
+setup_error = render_setup_controls(twin, setup, "wi_setup")
+if setup_error:
+    st.error(setup_error)
+else:
+    render_setup_summary(setup, twin)
+    render_setup_map(setup, "wi_setup", twin, float(scenario["wind_speed_ms"]), float(scenario["wind_from_deg"]))
+
+b_apply, b_open = st.columns(2)
+run = b_apply.button("Apply scenario", use_container_width=True)
+open_spread = b_open.button("Apply Scenario & Open Spread Simulation", type="primary",
+                            use_container_width=True, disabled=bool(setup_error))
+if run or open_spread:
+    _recompute(log=True)
+    twin = st.session_state["_wi_twin"]
 if open_spread:
-    # Same twin, same scenario: Module 2 receives exactly what was computed here.
-    apply_and_open_spread(twin, scenario, focus_choice)
+    # Same twin, same scenario, same set-up: Module 2 receives exactly what was configured here.
+    apply_and_open_spread(twin, scenario, setup)
 snap = twin.current_snapshot
 summary = twin.get_summary()
 

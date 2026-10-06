@@ -123,18 +123,30 @@ GOOGLE_MAPS_MAP_ID=                 # optional vector Map ID for 3D tilt / rotat
 
 ### What-If -> Spread Simulation
 
-1. **What-If Simulator**: set temperature, humidity, wind speed, wind direction
-   (the bearing the wind blows FROM) and seeded hotspots, pick the focus area
-   (Bandipur Tiger Reserve by default), then press
-   **Apply Scenario & Open Spread Simulation**.
-2. **Spread Simulation** opens on Google satellite imagery of that area, with a
-   500 m x 500 m grid of 25 m cells drawn on the real coordinates. **Run
-   Simulation** runs the project's `FireSpreadSimulator` on that grid, using
-   the FFMC / BUI / NDVI of the regional grid zone, the scenario wind and a DEM
-   sample (Open-Topo-Data / Open-Meteo, cached in `models/focus_terrain/`).
-   The map then plays the spread with wind-driven fire, smoke, embers, ash and
-   burned ground; play / pause / reset / 1x-2x-5x and the camera presets run in
-   the browser. The original regional 2-hour projection is kept in an expander.
+Google Cloud APIs for the key in `GOOGLE_MAPS_API_KEY`: **Maps JavaScript API** (map) and, for the
+location search, **Geocoding API** or **Places API (New)** (either one; Geocoding is tried first).
+
+1. **What-If Simulator**
+   * Weather scenario: temperature, humidity, wind speed, wind direction (the bearing the wind blows
+     FROM), seeded hotspots, or a preset.
+   * Simulation set-up: a preset forest (Bandipur, Nagarhole, Kudremukh, highest-risk zone) or any place
+     found with the Google search box on the map; width x height (100-3000 m) or an area (0.25-5 km²);
+     cell size (5 / 10 / **25** / 50 m); simulated duration (1 min - 4 h); ignition (upwind edge, centre,
+     downwind edge, or points clicked on the map); grid / boundary visibility.
+   * The map shows the focus area as a box you can drag and resize (values snap to whole cells and
+     update when you release), the 25 m grid, the simulation domain (dashed) and the ignition.
+   * **Apply Scenario & Open Spread Simulation** transfers all of it.
+2. **Spread Simulation**
+   * **Run Simulation** runs the project's `FireSpreadSimulator` on the *simulation domain*: the focus
+     area plus a margin of (CA steps + 1) cells on every side. The CA moves fire at most one cell per
+     step, so the fire is limited only by the simulated duration (or fuel), never by the drawn box.
+   * Conditions: FFMC / BUI / NDVI of the regional grid zone, the scenario wind, a real DEM sampled on a
+     ~90 m lattice (Open-Topo-Data / Open-Meteo, cached in `models/focus_terrain/dem_lattice.csv`).
+   * The map plays the result with fire-front flames, merged wind-driven smoke plumes, embers, ash and
+     a burn scar. Play / pause / reset / 1x-2x-5x, the simulation-time slider, layer toggles and
+     camera presets run in the browser (no Streamlit reruns).
+   * Analytics, CSV export of every step and GeoJSON export of the simulated burned cells.
+   * The original regional 2-hour projection is kept in an expander.
 
 ### MySQL (optional - SQLite is used when unset)
 
