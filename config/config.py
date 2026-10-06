@@ -34,6 +34,12 @@ class APIConfig:
     owm_api_key: str = os.getenv("OWM_API_KEY", "")
     owm_base_url: str = "https://api.openweathermap.org/data/2.5"
 
+    # Google Maps Platform (Maps JavaScript API) - satellite base map of the
+    # Spread Simulation page. Optional map ID enables vector rendering (tilt /
+    # rotation); without one Google's DEMO_MAP_ID is used.
+    google_maps_api_key: str = os.getenv("GOOGLE_MAPS_API_KEY", "")
+    google_maps_map_id: str = os.getenv("GOOGLE_MAPS_MAP_ID", "")
+
 
 @dataclass
 class RegionConfig:
@@ -63,6 +69,17 @@ class SystemConfig:
     # Fire spread simulation horizon (Scenario 1: 2-hour projection)
     fire_spread_horizon_hours: int = 2
     ca_cell_size_m: int = 100
+    # Local, geographically anchored spread simulation (Spread Simulation page):
+    # a focus_size_m x focus_size_m area on real lat/lon cells of local_ca_cell_m,
+    # run by the same FireSpreadSimulator. Its time step is scaled with the cell
+    # size so the spread rate stays ca_cell_size_m per 15 min. base_spread_prob
+    # is a local-scale calibration (the regional CA keeps its default 0.35):
+    # at 0.35 every preset burns out within ~10 min on the 25 m grid; at 0.8 a
+    # monsoon-calm fire still dies out while extreme / high-wind fires cross the
+    # area. Not yet validated against observed fire perimeters.
+    focus_size_m: int = 500
+    local_ca_cell_m: int = 25
+    local_ca_base_spread_prob: float = 0.8
 
 
 API = APIConfig()
