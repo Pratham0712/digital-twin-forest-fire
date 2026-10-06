@@ -143,6 +143,7 @@ html,body{margin:0;height:100%;background:var(--bg);font-family:'Plus Jakarta Sa
 #wrap{position:relative;width:100%;height:__HEIGHT__px;border-radius:12px;overflow:hidden;border:1px solid #232b36;background:#0a0c10}
 #map{position:absolute;inset:0}
 #fx{position:absolute;inset:0;pointer-events:none;z-index:5}
+#scarfx{position:absolute;inset:0;pointer-events:none;z-index:4;mix-blend-mode:multiply}
 .panel{position:absolute;z-index:10;background:var(--surface);border:1px solid var(--border);border-radius:10px;backdrop-filter:blur(6px);font-size:11px}
 #hud{top:10px;left:10px;padding:10px 12px;min-width:200px;max-width:240px;pointer-events:none}
 #hud .t{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:700}
@@ -155,11 +156,14 @@ html,body{margin:0;height:100%;background:var(--bg);font-family:'Plus Jakarta Sa
 #legend{left:10px;bottom:62px;padding:8px 10px;line-height:1.7;pointer-events:none}
 #legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:-1px;border:1px solid rgba(255,255,255,.18)}
 #cam{right:10px;top:56px;padding:6px;display:flex;flex-direction:column;gap:4px}
+#layers{left:50%;transform:translateX(-50%);top:10px;padding:5px 8px;display:flex;align-items:center;gap:4px;white-space:nowrap}
+#layers .lbl{color:var(--muted);font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin-right:4px}
 #ctrl{left:50%;transform:translateX(-50%);bottom:10px;padding:6px 10px;display:flex;align-items:center;gap:6px;white-space:nowrap}
-button{background:#161b23;color:var(--text);border:1px solid var(--border);border-radius:7px;padding:5px 9px;font:600 11px inherit;cursor:pointer}
+button{background:#161b23;color:var(--text);border:1px solid var(--border);border-radius:7px;padding:5px 9px;font-family:inherit;font-weight:600;font-size:11px;cursor:pointer}
 button:hover{border-color:var(--accent)} button.on{border-color:var(--accent);color:#ffb347;background:rgba(255,107,53,.12)}
 button:disabled{opacity:.4;cursor:default}
-#tl{width:220px;accent-color:#ff6b35}
+#layers button{padding:4px 7px;font-size:10.5px}
+#tl{width:260px;accent-color:#ff6b35}
 #tlab{font-family:'JetBrains Mono',Consolas,monospace;min-width:84px;text-align:right}
 #err{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;background:rgba(10,12,16,.95);color:#ff6b4a;font-size:13px}
 #note{right:10px;bottom:62px;padding:6px 9px;max-width:230px;color:var(--muted);display:none}
@@ -168,6 +172,7 @@ button:disabled{opacity:.4;cursor:default}
 <body>
 <div id="wrap">
   <div id="map"></div>
+  <canvas id="scarfx"></canvas>
   <canvas id="fx"></canvas>
   <div id="hud" class="panel">
     <div class="t">Simulated fire spread</div>
@@ -186,15 +191,23 @@ button:disabled{opacity:.4;cursor:default}
     <div class="warn" id="hwarn">Fire reached the simulation boundary</div>
     <div class="sim" id="hsim"></div>
   </div>
+  <div id="layers" class="panel">
+    <span class="lbl">Layers</span>
+    <button class="tog on" data-t="fire">Fire</button><button class="tog on" data-t="smoke">Smoke</button>
+    <button class="tog on" data-t="embers">Embers</button><button class="tog on" data-t="ash">Ash</button>
+    <button class="tog on" data-t="heat">Heat</button><span class="sep"></span>
+    <button class="tog on" data-t="grid">Grid</button><button class="tog" data-t="front">Front</button>
+    <button class="tog on" data-t="wind">Wind</button><button class="tog" data-t="veg">Vegetation</button>
+  </div>
   <div id="legend" class="panel">
     <div><i style="background:transparent;border:2px solid #4dd0e1;border-radius:50%"></i><span id="lhot">Observed hotspot</span></div>
-    <div><i style="background:#ff8a1e"></i>Burning (simulated)</div>
-    <div><i style="background:#5a2a14"></i>Recently burned</div>
-    <div><i style="background:#1a1512"></i>Burned / charred</div>
+    <div><i style="background:linear-gradient(0deg,#b3260a,#ff9a2e,#fff0b0)"></i>Burning (simulated)</div>
+    <div><i style="background:#2a160e"></i>Recently burned</div>
+    <div><i style="background:#3a3532"></i>Burned / ash</div>
     <div><i style="background:#3f5878"></i>Non-fuel</div>
     <div><i style="background:transparent;border:2px solid #ffd166"></i>Ignition</div>
-    <div><i style="background:linear-gradient(90deg,transparent,#e8edf3)"></i>Predicted spread direction</div>
-    <div><i style="background:#7d7a76"></i>Smoke (wind-driven)</div>
+    <div><i style="background:linear-gradient(90deg,transparent,#e8edf3)"></i>Simulated spread direction</div>
+    <div><i style="background:linear-gradient(90deg,#3b3836,#a9a7a3)"></i>Smoke (wind-driven)</div>
   </div>
   <div id="cam" class="panel">
     <button id="cOver">Overview</button>
@@ -213,9 +226,6 @@ button:disabled{opacity:.4;cursor:default}
     <span class="sep"></span>
     <input id="tl" type="range" min="0" max="0" step="0.01" value="0">
     <span id="tlab">T+0 min</span>
-    <span class="sep"></span>
-    <button class="tog on" data-t="grid">Grid</button><button class="tog on" data-t="smoke">Smoke</button>
-    <button class="tog on" data-t="veg">Vegetation</button><button class="tog on" data-t="wind">Wind</button>
   </div>
   <div id="note" class="panel"></div>
   <div id="err"></div>
@@ -227,15 +237,16 @@ const F = P.focus, N = F.n, CELL = F.cell_m, NC = N * N;
 const LAT0 = F.lat, LON0 = F.lon;
 const MLAT = 111320, MLON = 111320 * Math.cos(LAT0 * Math.PI / 180);
 const HALF = N * CELL / 2;
-const SEC_PER_STEP = 0.9;            // 1x playback: one CA step per 0.9 s
-const DRIFT_K = 9;                   // visual drift (m per real second per m/s of wind), x playback speed:
-                                     // smoke must outrun the time-compressed fire front, as it does in reality
-const CAP = {flame: 900, smoke: 200, ember: 220, ash: 140, streak: 70, emitters: 90};
+const SEC_PER_STEP = 1.1;            // 1x playback: one CA step per 1.1 s
+const DRIFT_K = 9;                   // visual drift (m per real second per m/s of wind) x playback speed: smoke
+                                     // must outrun the time-compressed fire front, as it does in reality
+const CAP = {flame: 950, smoke: 380, ember: 200, ash: 170, streak: 70, emitters: 110};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 const R = rng(1234567);
 const clamp = (v,a,b)=>v<a?a:(v>b?b:v);
+const hash = (i,k)=>{const h=Math.sin(i*12.9898+k*78.233)*43758.5453;return h-Math.floor(h);};   // deterministic per cell
 function ll(x,y){return {lat: LAT0 + y / MLAT, lng: LON0 + x / MLON};}
 function cellXY(i){const r=(i/N)|0,c=i%N;return [(c+0.5-N/2)*CELL,(N/2-r-0.5)*CELL];}
 function showErr(msg){const e=document.getElementById('err');e.innerHTML=msg;e.style.display='flex';}
@@ -243,11 +254,11 @@ window.gm_authFailure=function(){showErr('<div><b>Google Maps authentication fai
 
 // ── simulation clock (browser side; Streamlit never reruns during playback) ──
 const LAST = P.lastStep || 0;
-let simT = 0, playing = false, speed = 1, simDone = false;
-function windAt(t){const w=P.wind[clamp(Math.floor(t),0,P.wind.length-1)];return w;}
+let simT = 0, playing = false, speed = 1;
+function windAt(t){return P.wind[clamp(Math.floor(t),0,P.wind.length-1)];}
 function windVec(t){const w=windAt(t);const to=(w[1]+180)*Math.PI/180;return [Math.sin(to)*w[0],Math.cos(to)*w[0],w[0],w[1]];}
 const IGN = P.ign, OUT = P.out.map((o,i)=>o>=0?o:(IGN[i]>=0?IGN[i]+1:-1)), INT = P.inten, NF = P.nonfuel;
-// per-cell visual state at clock t: 0 unburned,1 burning,2 recently burned,3 charred,4 non-fuel,5 ignition (not yet run)
+// per-cell CA state at clock t: 0 unburned, 1 burning, 2 recently burned, 3 burned, 4 non-fuel, 5 ignition (before a run)
 function cellState(i,t){
   if(NF[i]) return 4;
   if(!P.hasRun) return IGN[i]===0?5:0;
@@ -255,101 +266,136 @@ function cellState(i,t){
   if(t<OUT[i]) return 1;
   return (t-OUT[i])<3?2:3;
 }
-// fire / smoke strength of a cell at clock t (0..1), from the CA lifecycle
+// Visual interpolation between CA snapshots (the CA decides WHICH cell burns WHEN; this
+// only shapes the transition): a cell that the CA ignites at step a pre-heats over the last
+// 0.4 step, flares up, burns, dies down after burn-out, then smoulders.
 function fireStrength(i,t){
-  const a=IGN[i]; if(!P.hasRun||a<0||t<a||NF[i]) return 0;
-  const o=OUT[i], d=o-a, p=(t-a)/d;
-  if(p<1){ const env = p<0.22 ? 0.25+0.75*(p/0.22) : (p<0.8 ? 1 : 1-0.45*(p-0.8)/0.2); return env; }
-  const s=t-o; return s<0.7 ? 0.32*(1-s/0.7) : 0;        // last flames over the burned-out cell
+  const a=IGN[i]; if(!P.hasRun||a<0||NF[i]||t<a-0.4) return 0;
+  if(t<a) return 0.18*(t-(a-0.4))/0.4;
+  const o=OUT[i], p=(t-a)/(o-a);
+  if(p<1) return p<0.25 ? 0.3+0.7*(p/0.25) : (p<0.75 ? 1 : 1-0.4*(p-0.75)/0.25);
+  const s=t-o; return s<1 ? 0.45*Math.pow(1-s,1.8) : 0;    // dying flames over the burned-out cell
 }
 function smokeStrength(i,t){
   const a=IGN[i]; if(!P.hasRun||a<0||t<a||NF[i]) return 0;
-  const o=OUT[i]; if(t<o) return 0.45+0.55*clamp((t-a)/0.35,0,1);
-  const s=t-o; return s<2.5 ? 0.42*(1-s/2.5) : 0;           // residual smoke while it smoulders
+  const o=OUT[i]; if(t<o) return 0.5+0.5*clamp((t-a)/0.3,0,1);
+  const s=t-o; return s<3 ? 0.55*Math.pow(1-s/3,1.3) : 0;    // smoke decays gradually while it smoulders
 }
 
-// ── sprites (rendered once) ────────────────────────────────────────────────
-function sprite(sz,fn){const c=document.createElement('canvas');c.width=c.height=sz;fn(c.getContext('2d'),sz);return c;}
-function radial(stops){return (g,s)=>{const r=g.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);stops.forEach(([o,c])=>r.addColorStop(o,c));g.fillStyle=r;g.fillRect(0,0,s,s);};}
-const SPR = {
-  flame:[radial([[0,'rgba(255,255,235,1)'],[0.25,'rgba(255,236,150,.9)'],[0.6,'rgba(255,170,40,.45)'],[1,'rgba(255,120,0,0)']]),
-         radial([[0,'rgba(255,214,110,1)'],[0.35,'rgba(255,140,30,.8)'],[0.7,'rgba(240,80,10,.35)'],[1,'rgba(200,40,0,0)']]),
-         radial([[0,'rgba(255,120,40,.9)'],[0.4,'rgba(210,50,10,.6)'],[0.75,'rgba(120,20,5,.25)'],[1,'rgba(60,10,0,0)']])].map(f=>sprite(64,f)),
-  glow: sprite(128, radial([[0,'rgba(255,150,50,.85)'],[0.3,'rgba(255,100,20,.45)'],[0.7,'rgba(200,50,0,.12)'],[1,'rgba(150,30,0,0)']])),
-  ember: sprite(16, radial([[0,'rgba(255,250,210,1)'],[0.3,'rgba(255,180,60,.9)'],[1,'rgba(255,90,0,0)']])),
-  ash: sprite(8, radial([[0,'rgba(205,200,195,.95)'],[1,'rgba(160,155,150,0)']])),
-  smoke: [], tree: [], treeLit: null, treeBurnt: null
-};
-// procedural smoke puffs: many soft blobs -> irregular, non-repeating shapes
-for(let k=0;k<6;k++){
-  const r2=rng(77+k*13);
-  SPR.smoke.push(sprite(128,(g,s)=>{
-    for(let j=0;j<22;j++){
-      const a=r2()*Math.PI*2, d=r2()*s*0.24, x=s/2+Math.cos(a)*d, y=s/2+Math.sin(a)*d, rad=s*(0.12+r2()*0.2);
-      const gr=g.createRadialGradient(x,y,0,x,y,rad); const v=180+Math.floor(r2()*40);
-      gr.addColorStop(0,`rgba(${v},${v-4},${v-8},${0.10+r2()*0.10})`); gr.addColorStop(1,`rgba(${v},${v},${v},0)`);
-      g.fillStyle=gr; g.fillRect(0,0,s,s);
-    }
-  }));
-}
-// darker, fire-lit variants for young smoke near the flames (pre-rendered: no per-frame filters)
-SPR.smokeDark=SPR.smoke.map(src=>sprite(128,(g,s)=>{g.drawImage(src,0,0);g.globalCompositeOperation='source-atop';
-  g.fillStyle='rgba(48,36,30,0.62)';g.fillRect(0,0,s,s);}));
-// irregular canopy crowns: several soft lobes, sun-lit from the north-west, darker rim
-function canopy(seed,base,light,rim){
-  const r2=rng(seed);
-  return sprite(48,(g,s)=>{
-    const lobes=3+((r2()*4)|0);
-    for(let j=0;j<lobes;j++){
-      const a=r2()*Math.PI*2,d=s*0.12*r2(),x=s/2+Math.cos(a)*d,y=s/2+Math.sin(a)*d,rad=s*(0.2+r2()*0.14);
-      const gr=g.createRadialGradient(x-rad*0.35,y-rad*0.35,rad*0.1,x,y,rad);
-      gr.addColorStop(0,light);gr.addColorStop(0.55,base);gr.addColorStop(0.9,rim);gr.addColorStop(1,'rgba(0,0,0,0)');
-      g.fillStyle=gr;g.beginPath();g.arc(x,y,rad,0,Math.PI*2);g.fill();
-    }
+// ── sprites (rendered once, reused) ────────────────────────────────────────
+function sprite(w,h,fn){const c=document.createElement('canvas');c.width=w;c.height=h;fn(c.getContext('2d'),w,h);return c;}
+function radial(stops){return (g,w,h)=>{const r=g.createRadialGradient(w/2,h/2,0,w/2,h/2,w/2);stops.forEach(([o,c])=>r.addColorStop(o,c));g.fillStyle=r;g.fillRect(0,0,w,h);};}
+// Procedural flame: a ragged crown of 3-5 overlapping tongues of different heights (never a single
+// clean cone); red rim -> orange body -> yellow-white core, softened with blur.
+function tongue(seed){
+  const r=rng(seed);
+  return sprite(128,176,(g,w,h)=>{
+    const shape=(cx,by,bw,th,wob)=>{
+      const k1=(r()-0.5)*wob,k2=(r()-0.5)*wob,tipx=cx+(r()-0.5)*wob;
+      g.beginPath();g.moveTo(cx-bw,by);
+      g.bezierCurveTo(cx-bw*1.1+k1,by-th*0.3,cx-bw*0.5+k2,by-th*0.72,tipx,by-th);
+      g.bezierCurveTo(cx+bw*0.5-k2,by-th*0.72,cx+bw*1.1-k1,by-th*0.3,cx+bw,by);
+      g.quadraticCurveTo(cx,by+bw*0.3,cx-bw,by);g.closePath();
+    };
+    const by=h-8, n=3+((r()*3)|0), tongues=[];
+    for(let j=0;j<n;j++) tongues.push([w/2+(r()-0.5)*w*0.28, w*(0.08+r()*0.07), h*(0.45+r()*0.42)]);
+    tongues.sort((a,b)=>b[2]-a[2]);
+    g.filter='blur(3.5px)';
+    for(const [cx,bw,th] of tongues){                     // outer flame body
+      shape(cx,by,bw,th,w*0.25);
+      const gr=g.createLinearGradient(0,by,0,by-th);
+      gr.addColorStop(0,'rgba(200,50,8,0)');gr.addColorStop(0.06,'rgba(215,65,12,0.75)');gr.addColorStop(0.22,'rgba(255,130,28,0.95)');gr.addColorStop(0.55,'rgba(250,100,18,0.85)');
+      gr.addColorStop(0.85,'rgba(200,45,8,0.5)');gr.addColorStop(1,'rgba(120,18,4,0)');g.fillStyle=gr;g.fill();}
+    g.globalCompositeOperation='lighter';
+    for(const [cx,bw,th] of tongues){                     // bright inner core, lower and narrower
+      shape(cx+(r()-0.5)*3,by-2,bw*0.45,th*0.45,w*0.12);
+      const gr=g.createLinearGradient(0,by,0,by-th*0.45);
+      gr.addColorStop(0,'rgba(255,245,200,0)');gr.addColorStop(0.1,'rgba(255,245,200,0.85)');gr.addColorStop(0.4,'rgba(255,215,120,0.7)');gr.addColorStop(1,'rgba(255,150,40,0)');
+      g.fillStyle=gr;g.fill();}
+    // feather the sprite borders: blur can bleed to the canvas edge, and hundreds of additive
+    // copies would then show faint rectangles
+    g.filter='none'; g.globalCompositeOperation='destination-in';
+    const mx=g.createLinearGradient(0,0,w,0); mx.addColorStop(0,'rgba(0,0,0,0)');mx.addColorStop(0.18,'#000');mx.addColorStop(0.82,'#000');mx.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=mx; g.fillRect(0,0,w,h);
+    const my=g.createLinearGradient(0,0,0,h); my.addColorStop(0,'rgba(0,0,0,0)');my.addColorStop(0.08,'#000');my.addColorStop(1,'#000');
+    g.fillStyle=my; g.fillRect(0,0,w,h);
   });
 }
-const GREENS=[['#2c4a26','#4f7a3a','#16260f'],['#355a2b','#5f8c43','#1a2c12'],['#28452e','#4b7350','#132416'],
-              ['#3d5a2c','#6b8a45','#1e2c12'],['#2f4f33','#557e4f','#15261a'],['#43602f','#78955a','#22301a']];
-GREENS.forEach((c,k)=>SPR.tree.push(canopy(900+k*7,c[0],c[1],c[2])));
+const SPR = {
+  tongue: Array.from({length:12},(_,k)=>tongue(101+k*17)),
+  glow: sprite(128,128,radial([[0,'rgba(255,150,50,.9)'],[0.3,'rgba(255,100,20,.45)'],[0.7,'rgba(200,50,0,.12)'],[1,'rgba(150,30,0,0)']])),
+  bed: sprite(128,128,radial([[0,'rgba(255,190,90,.9)'],[0.22,'rgba(240,100,25,.7)'],[0.55,'rgba(150,30,6,.4)'],[1,'rgba(60,10,0,0)']])),
+  glint: sprite(16,16,radial([[0,'rgba(255,240,190,1)'],[0.35,'rgba(255,140,40,.9)'],[1,'rgba(200,40,0,0)']])),
+  ash: sprite(8,8,radial([[0,'rgba(215,210,205,.95)'],[1,'rgba(170,165,160,0)']])),
+  smoke: [], smokeShadow: [], tree: [], treeLit: null, treeBurnt: null
+};
+// Smoke puffs: fractal clusters of soft blobs (irregular, never a clean circle), pre-tinted in
+// four shades: charcoal (dense, near intense fire) -> dark grey -> grey -> light haze.
+const SHADES=[[92,84,78],[134,128,122],[178,175,171],[210,208,205]];   // fire-darkened -> sunlit grey-white
+const PUFFS=[];
+for(let k=0;k<8;k++){
+  const r2=rng(77+k*13), blobs=[];
+  for(let j=0;j<34;j++){const a=r2()*Math.PI*2,d=Math.pow(r2(),0.7)*0.27,rad=0.07+r2()*0.2;blobs.push([0.5+Math.cos(a)*d,0.5+Math.sin(a)*d,rad,0.12+r2()*0.16,(r2()-0.5)*26]);}
+  PUFFS.push(blobs);
+}
+function puff(blobs,rgb,alphaMul){
+  return sprite(128,128,(g,s)=>{for(const [x,y,rad,al,dv] of blobs){
+    // each lobe lit from the north-west (top-left) and shadowed on the far side -> billowing volume
+    const X=x*s,Y=y*s,RR=rad*s,gr=g.createRadialGradient(X-RR*0.35,Y-RR*0.35,0,X,Y,RR);
+    const hi=rgb.map(v=>clamp(Math.round(v+dv+30),0,255)), lo=rgb.map(v=>clamp(Math.round(v+dv-28),0,255));
+    gr.addColorStop(0,`rgba(${hi[0]},${hi[1]},${hi[2]},${al*alphaMul})`);gr.addColorStop(0.55,`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${al*alphaMul*0.7})`);
+    gr.addColorStop(0.85,`rgba(${lo[0]},${lo[1]},${lo[2]},${al*alphaMul*0.3})`);gr.addColorStop(1,`rgba(${lo[0]},${lo[1]},${lo[2]},0)`);
+    g.fillStyle=gr;g.fillRect(0,0,s,s);}});
+}
+SHADES.forEach(rgb=>SPR.smoke.push(PUFFS.map(b=>puff(b,rgb,1.6))));
+SPR.smokeShadow=PUFFS.map(b=>puff(b,[0,0,0],1.2));
+// vegetation-density representation (off by default; the satellite already shows the real canopy)
+function canopy(seed,base,light,rim){
+  const r2=rng(seed);
+  return sprite(48,48,(g,s)=>{const lobes=3+((r2()*4)|0);
+    for(let j=0;j<lobes;j++){const a=r2()*Math.PI*2,d=s*0.12*r2(),x=s/2+Math.cos(a)*d,y=s/2+Math.sin(a)*d,rad=s*(0.2+r2()*0.14);
+      const gr=g.createRadialGradient(x-rad*0.35,y-rad*0.35,rad*0.1,x,y,rad);
+      gr.addColorStop(0,light);gr.addColorStop(0.55,base);gr.addColorStop(0.9,rim);gr.addColorStop(1,'rgba(0,0,0,0)');
+      g.fillStyle=gr;g.beginPath();g.arc(x,y,rad,0,Math.PI*2);g.fill();}});
+}
+[['#2c4a26','#4f7a3a','#16260f'],['#355a2b','#5f8c43','#1a2c12'],['#28452e','#4b7350','#132416'],['#3d5a2c','#6b8a45','#1e2c12']]
+  .forEach((c,k)=>SPR.tree.push(canopy(900+k*7,c[0],c[1],c[2])));
 SPR.treeLit=canopy(31,'#8a3a12','#ffb347','#3a1206');
 SPR.treeBurnt=canopy(57,'#221d1a','#3a332e','#0d0b0a');
-SPR.shadow=sprite(48,radial([[0,'rgba(0,0,0,.55)'],[0.6,'rgba(0,0,0,.25)'],[1,'rgba(0,0,0,0)']]));
-
-// ── procedural vegetation (inside the simulation area only) ────────────────
 const TREES=[];
 (function(){
   const r2=rng(4242);
-  const dens=(x,y)=>0.55+0.3*Math.sin(x/37+1.3)*Math.cos(y/53-0.4)+0.25*Math.sin((x+y)/23);   // clustered, not rows
-  for(let i=0;i<NC;i++){
-    if(NF[i]) continue;
-    const [cx,cy]=cellXY(i);
+  const dens=(x,y)=>0.55+0.3*Math.sin(x/37+1.3)*Math.cos(y/53-0.4)+0.25*Math.sin((x+y)/23);
+  for(let i=0;i<NC;i++){ if(NF[i]) continue; const [cx,cy]=cellXY(i);
     let k=Math.round(clamp(dens(cx,cy),0.05,1.1)*9);
-    if(P.slopePct) k=Math.round(k*clamp(1-P.slopePct[i]/120,0.35,1));   // sparser on steep ground
-    for(let j=0;j<k;j++){
-      TREES.push({x:cx+(r2()-0.5)*CELL*0.95,y:cy+(r2()-0.5)*CELL*0.95,r:1.6+r2()*r2()*4.2,v:(r2()*SPR.tree.length)|0,c:i});
-    }
-  }
-  TREES.sort((a,b)=>b.y-a.y);                 // north first -> painter's order for tilted views
+    if(P.slopePct) k=Math.round(k*clamp(1-P.slopePct[i]/120,0.35,1));
+    for(let j=0;j<k;j++) TREES.push({x:cx+(r2()-0.5)*CELL*0.95,y:cy+(r2()-0.5)*CELL*0.95,r:1.6+r2()*r2()*4.2,v:(r2()*SPR.tree.length)|0,c:i});}
+  TREES.sort((a,b)=>b.y-a.y);
 })();
 
-// ── particles (pooled) ─────────────────────────────────────────────────────
+// ── particles (pooled; nothing is created or destroyed per frame) ──────────
 function makePool(n){const a=[];for(let i=0;i<n;i++)a.push({on:false});return a;}
 const POOL={flame:makePool(CAP.flame),smoke:makePool(CAP.smoke),ember:makePool(CAP.ember),ash:makePool(CAP.ash),streak:makePool(CAP.streak)};
 const LIVE={flame:0,smoke:0,ember:0,ash:0,streak:0};
 function spawn(kind,o){const p=POOL[kind];for(let i=0;i<p.length;i++){if(!p[i].on){Object.assign(p[i],o);p[i].on=true;p[i].age=0;LIVE[kind]++;return p[i];}}return null;}
-function clearParticles(){for(const k in POOL){POOL[k].forEach(p=>p.on=false);LIVE[k]=0;}}
+function clearParticles(){for(const k in POOL){POOL[k].forEach(p=>p.on=false);LIVE[k]=0;}for(const k in ACC)ACC[k].fill(0);}
 const ACC={flame:new Float32Array(NC),smoke:new Float32Array(NC),ember:new Float32Array(NC),ash:new Float32Array(NC)};
 
 // ── map + projection ───────────────────────────────────────────────────────
 let map=null, proj=null, data=null, focusLine=null, cellFeat=new Array(NC), cellCache=new Int8Array(NC).fill(-1);
-let H=null, PXM=1, TILTF=0.2, ZOOM=12, show={grid:true,smoke:true,veg:true,wind:true}, budget=1.0;
+let H=null, PXM=1, TILTF=0.2, ZOOM=12, budget=1.0;
+const show={fire:true,smoke:true,embers:true,ash:true,heat:true,grid:true,front:false,wind:true,veg:false};
 const cvs=document.getElementById('fx'), ctx=cvs.getContext('2d');
+// burn scar lives on its own canvas, blended with the satellite imagery by CSS multiply
+const cvs2=document.getElementById('scarfx'), ctx2=cvs2.getContext('2d');
 const DPR0=Math.min(window.devicePixelRatio||1,1.5); let RS=1, DPR=DPR0, CW=0, CH=0;   // RS: adaptive render scale
-function resize(){const w=document.getElementById('wrap');CW=w.clientWidth;CH=w.clientHeight;DPR=DPR0*RS;cvs.width=Math.round(CW*DPR);cvs.height=Math.round(CH*DPR);cvs.style.width=CW+'px';cvs.style.height=CH+'px';}
+function resize(){const w=document.getElementById('wrap');CW=w.clientWidth;CH=w.clientHeight;DPR=DPR0*RS;cvs.width=Math.round(CW*DPR);cvs.height=Math.round(CH*DPR);cvs.style.width=CW+'px';cvs.style.height=CH+'px';
+  cvs2.width=cvs.width;cvs2.height=cvs.height;cvs2.style.width=CW+'px';cvs2.style.height=CH+'px';}
 new ResizeObserver(resize).observe(document.getElementById('wrap')); resize();
 
-// Ground-plane homography (local metres -> container pixels) from 4 projected
-// corners. Exact for a planar map under any zoom, rotation or tilt.
+// Ground-plane homography (local metres -> container pixels) from 4 projected corners.
+// Every effect is positioned in metres east/north of the focus centre (i.e. lat/lon) and
+// projected through it each frame, so it stays on the ground through pan/zoom/rotate/tilt.
 function solveH(src,dst){
   const A=[],b=[];
   for(let k=0;k<4;k++){const [x,y]=src[k],[u,v]=dst[k];
@@ -366,22 +412,16 @@ function updateProjection(){
   for(const [x,y] of src){const p=proj.fromLatLngToContainerPixel(new google.maps.LatLng(ll(x,y)));if(!p)return false;dst.push([p.x,p.y]);}
   H=solveH(src,dst); if(!H) return false;
   const a=W2S(0,0),c=W2S(20,0); PXM=Math.hypot(c[0]-a[0],c[1]-a[1])/20;
-  const tilt=(map.getTilt&&map.getTilt())||0; TILTF=0.18+0.82*Math.sin(tilt*Math.PI/180);
+  const tilt=(map.getTilt&&map.getTilt())||0; TILTF=0.22+0.78*Math.sin(tilt*Math.PI/180);
   ZOOM=map.getZoom()||12; return true;
 }
 
-// ── data layer: CA grid cells ──────────────────────────────────────────────
-const CELL_STYLE=[
-  {f:'#000000',fo:0,   s:'#ffffff',so:0.16},   // unburned
-  {f:'#ff8a1e',fo:0.20,s:'#ffb347',so:0.55},   // burning
-  {f:'#5a2a14',fo:0.50,s:'#7a3a1a',so:0.35},   // recently burned
-  {f:'#1a1512',fo:0.66,s:'#2a2420',so:0.30},   // charred
-  {f:'#3f5878',fo:0.30,s:'#5b7aa3',so:0.30},   // non-fuel
-  {f:'#ffd166',fo:0.18,s:'#ffd166',so:0.95},   // ignition (before run)
-];
-function styleFn(feat){const s=feat.getProperty('s')|0, st=CELL_STYLE[s];
-  const gridOff=!show.grid&&(s===0);
-  return {fillColor:st.f,fillOpacity:st.fo,strokeColor:st.s,strokeOpacity:gridOff?0:st.so,strokeWeight:s===5?2:0.6,clickable:false,zIndex:s};}
+// ── data layer: the computational grid only (fire states are drawn as VFX, not tiles) ──
+function styleFn(feat){const s=feat.getProperty('s')|0, g=show.grid;
+  if(s===4) return {fillColor:'#3f5878',fillOpacity:0.30,strokeColor:'#5b7aa3',strokeOpacity:g?0.3:0,strokeWeight:0.6,clickable:false};
+  if(s===5) return {fillColor:'#ffd166',fillOpacity:0.15,strokeColor:'#ffd166',strokeOpacity:0.95,strokeWeight:2,clickable:false,zIndex:5};
+  if(s===1) return {fillOpacity:0,strokeColor:'#ffb347',strokeOpacity:g?0.45:0,strokeWeight:0.8,clickable:false,zIndex:2};
+  return {fillOpacity:0,strokeColor:'#ffffff',strokeOpacity:g?(s===0?0.14:0.08):0,strokeWeight:0.6,clickable:false};}
 function buildCells(){
   data=new google.maps.Data({map});
   const dlat=CELL/MLAT,dlon=CELL/MLON;
@@ -393,13 +433,14 @@ function buildCells(){
   focusLine=new google.maps.Polyline({map,path:[{lat:F.north,lng:F.west},{lat:F.north,lng:F.east},{lat:F.south,lng:F.east},{lat:F.south,lng:F.west},{lat:F.north,lng:F.west}],
     strokeColor:'#ffd166',strokeOpacity:0.95,strokeWeight:2.2,clickable:false,zIndex:20});
 }
-function syncCells(t){                         // restyle only cells whose state changed
+function syncCells(t){                         // restyle only the cells whose CA state changed
   let boundary=false;
   for(let i=0;i<NC;i++){const s=cellState(i,t);
-    if(s!==cellCache[i]){cellCache[i]=s;cellFeat[i].setProperty('s',s);}
+    if(s!==cellCache[i]){cellCache[i]=s;if(cellFeat[i])cellFeat[i].setProperty('s',s);}
     if(s>=1&&s<=3){const r=(i/N)|0,c=i%N;if(r===0||c===0||r===N-1||c===N-1)boundary=true;}}
   if(focusLine) focusLine.setOptions({strokeColor:boundary?'#ff4d3a':'#ffd166'});
   document.getElementById('hwarn').style.display=boundary?'block':'none';
+  scarDirty=true; frontDirty=true;
 }
 function hotspotLayer(){
   const obs=P.hotspotKind==='observed';
@@ -408,6 +449,68 @@ function hotspotLayer(){
     new google.maps.Circle({map,center:{lat:h.lat,lng:h.lon},radius:187.5,strokeColor:obs?'#4dd0e1':'#b39ddb',strokeOpacity:0.95,strokeWeight:2,
       fillColor:obs?'#4dd0e1':'#b39ddb',fillOpacity:0.08,clickable:false,zIndex:15});
   });
+}
+
+// ── burn scar: organic charred ground, rendered off-screen in metre space ──
+// Each affected cell lays down several soft, irregular char blobs that overlap their
+// neighbours, so the scar is one continuous organic shape (never square tiles). Colour moves
+// from scorched (under the flames) -> fresh char with a warm tint -> grey ash over 3 steps.
+const SCAR_RES=1.6, SCAR_E=HALF+CELL;                      // px per metre, half-extent (m)
+const scar=document.createElement('canvas'); scar.width=scar.height=Math.round(2*SCAR_E*SCAR_RES);
+const sctx=scar.getContext('2d'); let scarDirty=true, scarT=-1;
+function renderScar(t){
+  // Colours here are MULTIPLY factors applied to the satellite image (drawScar), so the real
+  // ground texture stays visible: scorched (warm, light) under the flames -> fresh char
+  // (very dark, brownish) -> grey ash over 3 CA steps.
+  const S=scar.width; sctx.clearRect(0,0,S,S);
+  const toPx=(x,y)=>[(x+SCAR_E)*SCAR_RES,(SCAR_E-y)*SCAR_RES];
+  for(let i=0;i<NC;i++){
+    const a=IGN[i]; if(!P.hasRun||a<0||t<a||NF[i]) continue;
+    const o=OUT[i], burning=t<o, prog=burning?clamp((t-a)/(o-a),0,1):1, age=burning?0:t-o;
+    const fresh=clamp(1-age/3,0,1);
+    let c;
+    if(burning) c=[150-80*prog,95-50*prog,70-35*prog];
+    else c=[70+45*(1-fresh),48+60*(1-fresh),38+64*(1-fresh)];
+    const alpha=burning?0.45+0.45*prog:0.92;
+    const [x,y]=cellXY(i);
+    for(let k=0;k<4;k++){
+      const ox=(hash(i,k)-0.5)*CELL*0.8, oy=(hash(i,k+9)-0.5)*CELL*0.8, rad=CELL*(0.48+0.34*hash(i,k+17))*SCAR_RES;
+      const v=0.85+0.3*hash(i,k+23), cc=c.map(z=>Math.round(clamp(z*v,0,255)));
+      const [px,py]=toPx(x+ox,y+oy), gr=sctx.createRadialGradient(px,py,0,px,py,rad);
+      gr.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);gr.addColorStop(0.6,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*0.8})`);
+      gr.addColorStop(1,`rgba(${cc[0]},${cc[1]},${cc[2]},0)`);
+      sctx.fillStyle=gr; sctx.fillRect(px-rad,py-rad,2*rad,2*rad);
+    }
+  }
+  scarT=t; scarDirty=false;
+}
+function drawScar(){
+  const S=scar.width, p0=W2S(-SCAR_E,SCAR_E), p1=W2S(SCAR_E,SCAR_E), p2=W2S(-SCAR_E,-SCAR_E);
+  ctx2.setTransform(1,0,0,1,0,0); ctx2.clearRect(0,0,cvs2.width,cvs2.height);
+  ctx2.setTransform(DPR*(p1[0]-p0[0])/S,DPR*(p1[1]-p0[1])/S,DPR*(p2[0]-p0[0])/S,DPR*(p2[1]-p0[1])/S,DPR*p0[0],DPR*p0[1]);
+  ctx2.drawImage(scar,0,0);
+}
+
+// ── fire front topology (recomputed only when the CA step changes) ─────────
+// For every burning cell: which sides face unburned fuel. Flames are emitted mostly along
+// those edges, so adjacent burning cells read as one continuous, irregular fire line.
+let frontDirty=true, FRONT=[], PERIM=[];
+const NB4=[[-1,0,0,1],[1,0,0,-1],[0,1,1,0],[0,-1,-1,0]];   // dr,dc, edge normal (east, north)
+function rebuildFront(t){
+  FRONT=[]; PERIM=[];
+  const aff=i=>{const s=cellState(i,t);return s>=1&&s<=3;};
+  for(let i=0;i<NC;i++){
+    const r=(i/N)|0,c=i%N,st=cellState(i,t);
+    if(!(st>=1&&st<=3)) continue;
+    const edges=[];
+    for(const [dr,dc,ex,ey] of NB4){const nr=r+dr,nc=c+dc;
+      const open=nr<0||nc<0||nr>=N||nc>=N?false:(!aff(nr*N+nc)&&!NF[nr*N+nc]);
+      const outside=nr<0||nc<0||nr>=N||nc>=N||!aff(nr*N+nc);
+      if(open) edges.push([ex,ey]);
+      if(outside) PERIM.push([i,ex,ey,st===1&&open]);}
+    if(st===1) FRONT.push([i,edges]);
+  }
+  frontDirty=false;
 }
 
 // ── camera ─────────────────────────────────────────────────────────────────
@@ -423,12 +526,13 @@ function flyTo(target,ms){
     if(k<1) camAnim=requestAnimationFrame(step); else camAnim=null;};
   camAnim=requestAnimationFrame(step);
 }
-function frontCentre(){let sx=0,sy=0,k=0;for(let i=0;i<NC;i++){const s=cellState(i,simT);if(s===1||s===5||(!P.hasRun&&IGN[i]===0)){const [x,y]=cellXY(i);sx+=x;sy+=y;k++;}}
-  return k?ll(sx/k,sy/k):{lat:LAT0,lng:LON0};}
+function centroid(t,states){let sx=0,sy=0,k=0;for(let i=0;i<NC;i++){if(states.includes(cellState(i,t))){const [x,y]=cellXY(i);sx+=x;sy+=y;k++;}}return k?[sx/k,sy/k]:null;}
+function frontCentre(){const c=centroid(simT,[1,5])||centroid(simT,[2,3])||[0,0];return ll(c[0],c[1]);}
+const IGN0=(()=>{let sx=0,sy=0,k=0;for(let i=0;i<NC;i++)if(IGN[i]===0){const [x,y]=cellXY(i);sx+=x;sy+=y;k++;}return k?[sx/k,sy/k]:[0,0];})();
 const SIMZOOM=17;
 function camSim(ms){flyTo({lat:LAT0,lng:LON0,zoom:SIMZOOM,tilt:0,heading:0},ms||1200);}
 function note(msg){const n=document.getElementById('note');n.textContent=msg;n.style.display='block';clearTimeout(note.t);note.t=setTimeout(()=>n.style.display='none',4000);}
-function tiltTo(t){map.setTilt(t);setTimeout(()=>{if((map.getTilt()||0)<1&&t>0)note('3D tilt is not available for this imagery here; the view stays top-down.');},700);}
+function checkTilt(t){setTimeout(()=>{if((map.getTilt()||0)<1&&t>0)note('3D tilt is not available for this imagery here; the view stays top-down.');},800);}
 
 // ── UI ─────────────────────────────────────────────────────────────────────
 const fmtT=t=>'T+'+(t*(P.stepMin||0)).toFixed(0)+' min';
@@ -436,16 +540,16 @@ const tl=document.getElementById('tl'), bPlay=document.getElementById('bPlay');
 tl.max=String(LAST); tl.disabled=!P.hasRun; bPlay.disabled=!P.hasRun;
 function setPlaying(v){playing=v&&P.hasRun;bPlay.textContent=playing?'Pause':(simT>0&&simT<LAST?'Resume':'Run');bPlay.classList.toggle('on',playing);}
 bPlay.onclick=()=>{if(simT>=LAST){simT=0;clearParticles();}setPlaying(!playing);};
-document.getElementById('bReset').onclick=()=>{simT=0;simDone=false;clearParticles();ACC.flame.fill(0);ACC.smoke.fill(0);setPlaying(false);tl.value='0';updateHud(true);if(data)syncCells(0);};
+document.getElementById('bReset').onclick=()=>{simT=0;clearParticles();setPlaying(false);tl.value='0';updateHud(true);if(data)syncCells(0);};
 document.querySelectorAll('.spd').forEach(b=>b.onclick=()=>{speed=+b.dataset.s;document.querySelectorAll('.spd').forEach(x=>x.classList.toggle('on',x===b));});
 document.querySelectorAll('.tog').forEach(b=>b.onclick=()=>{const k=b.dataset.t;show[k]=!show[k];b.classList.toggle('on',show[k]);if(k==='grid'&&data)data.setStyle(styleFn);});
 tl.oninput=()=>{simT=+tl.value;setPlaying(false);updateHud(true);if(data)syncCells(simT);};
-document.getElementById('cOver').onclick=()=>flyTo({lat:LAT0,lng:LON0,zoom:13,tilt:0,heading:0},1400);
+document.getElementById('cOver').onclick=()=>flyTo({lat:LAT0,lng:LON0,zoom:13.5,tilt:0,heading:0},1400);
 document.getElementById('cSim').onclick=()=>camSim();
-document.getElementById('cFront').onclick=()=>{const c=frontCentre();flyTo({lat:c.lat,lng:c.lng,zoom:18},1200);};
-document.getElementById('cClose').onclick=()=>{const c=frontCentre();flyTo({lat:c.lat,lng:c.lng,zoom:18.6,tilt:60},1500);setTimeout(()=>{if((map.getTilt()||0)<1)note('3D tilt is not available for this imagery here; the view stays top-down.');},1700);};
+document.getElementById('cFront').onclick=()=>{const c=frontCentre();flyTo({lat:c.lat,lng:c.lng,zoom:18.3},1200);};
+document.getElementById('cClose').onclick=()=>{const c=frontCentre();flyTo({lat:c.lat,lng:c.lng,zoom:19,tilt:60},1500);checkTilt(60);};
 document.getElementById('cReset').onclick=()=>camSim(900);
-document.getElementById('cTilt').onclick=()=>tiltTo((map.getTilt()||0)>5?0:55);
+document.getElementById('cTilt').onclick=()=>{const t=(map.getTilt()||0)>5?0:55;map.setTilt(t);checkTilt(t);};
 document.getElementById('cFull').onclick=()=>{const w=document.getElementById('wrap');if(document.fullscreenElement)document.exitFullscreen();else if(w.requestFullscreen)w.requestFullscreen();};
 document.addEventListener('fullscreenchange',()=>{const w=document.getElementById('wrap');w.style.height=document.fullscreenElement?'100vh':'__HEIGHT__px';resize();});
 
@@ -458,62 +562,73 @@ function updateHud(force){
   document.getElementById('tlab').textContent=fmtT(simT);
   document.getElementById('hwind').textContent=w[0].toFixed(1)+' m/s from '+COMPASS[Math.round((w[1]%360)/22.5)%16]+' ('+Math.round(w[1])+'°)';
   if(!force&&k===lastHudStep) return; lastHudStep=k;
-  const m=P.metrics[k];
-  const set=(id,v)=>document.getElementById(id).textContent=v;
+  const m=P.metrics[k], set=(id,v)=>document.getElementById(id).textContent=v;
   if(!m){set('hburn','0');set('hburned','0');set('harea','0 ha');set('hper','0 m');set('hdist','0 m');set('hros','0 m/min');set('hint','-');return;}
   set('hburn',m.burning);set('hburned',m.burned);set('harea',m.burned_ha.toFixed(2)+' ha');
   set('hper',Math.round(m.perimeter_m)+' m');set('hdist',Math.round(m.front_distance_m)+' m');
   set('hros',m.ros_m_per_min.toFixed(1)+' m/min');set('hint',m.intensity_class);
 }
 document.getElementById('hname').textContent=F.name;
-document.getElementById('hsim').textContent=(P.hasRun?'Cellular automata, ':'Ignition shown; press Run Simulation. ')+F.size_m+' m × '+F.size_m+' m ('+(F.size_m*F.size_m/1e6).toFixed(2)+' km²), '+CELL+' m cells. Flames, smoke, embers, ash and vegetation are visual representations of the simulated state.';
+document.getElementById('hsim').textContent=(P.hasRun?'Cellular automata, ':'Ignition shown; press Run Simulation. ')+F.size_m+' m × '+F.size_m+' m ('+(F.size_m*F.size_m/1e6).toFixed(2)+' km²), '+CELL+' m cells. Flames, smoke, embers and ash are visual representations of the simulated state.';
 
-// ── per-frame simulation of the visual effects ─────────────────────────────
-function lod(){            // 0 regional, 1 forest, 2 simulation, 3 close
-  return ZOOM<14?0:(ZOOM<16?1:(ZOOM<17.5?2:3));
-}
-function emitters(t){      // burning / smouldering cells, strongest first, capped
+// ── per-frame visual effects (driven by the CA state at the current clock) ─
+function lod(){ return ZOOM<14?0:(ZOOM<16?1:(ZOOM<17.6?2:3)); }   // regional / forest / simulation / close
+function emitters(t){
   const list=[];
   for(let i=0;i<NC;i++){const fs=fireStrength(i,t),ss=smokeStrength(i,t);if(fs>0||ss>0)list.push([i,fs,ss]);}
   if(list.length>CAP.emitters){list.sort((a,b)=>(b[1]*INT[b[0]]+b[2]*.3)-(a[1]*INT[a[0]]+a[2]*.3));list.length=CAP.emitters;}
   return list;
 }
+const EDGES=new Map();
 function stepFx(dt,t,now){
-  const L=lod(), wv=windVec(t), wx=wv[0], wy=wv[1], spd=wv[2];
-  const em=emitters(t), q=budget;
-  for(const [i,fs,ss] of em){
-    const I=Math.max(INT[i],0.15), [cx,cy]=cellXY(i);
-    if(L>=2&&fs>0){ACC.flame[i]+=dt*fs*(14+34*I)*q*(L===3?1:0.6);
-      while(ACC.flame[i]>=1){ACC.flame[i]-=1;if(LIVE.flame>=CAP.flame*q)continue;const life=0.45+R()*0.55,h=(2.5+9*I)*(0.6+0.5*fs);
-        spawn('flame',{x:cx+(R()-.5)*CELL*.9,y:cy+(R()-.5)*CELL*.9,z:0,vx:wx*0.35+(R()-.5)*1.5,vy:wy*0.35+(R()-.5)*1.5,vz:h/life,
-          life,size:(3+6.5*I)*(0.7+0.6*R()),seed:R()*6.28,str:fs});}}
-    if(show.smoke&&L>=1&&ss>0){ACC.smoke[i]+=dt*ss*(0.6+1.6*I)*q*(L===1?0.5:(L===3?0.75:1));
-      while(ACC.smoke[i]>=1){ACC.smoke[i]-=1;if(LIVE.smoke>=CAP.smoke*q)continue;
-        spawn('smoke',{x:cx+(R()-.5)*CELL*.8,y:cy+(R()-.5)*CELL*.8,z:2+R()*3,vz:2.4+R()*2.2*I,life:7+R()*6,
-          s0:8+12*I,s1:45+70*I+R()*30,rot:R()*6.28,vr:(R()-.5)*0.25,v:(R()*SPR.smoke.length)|0,den:(0.35+0.65*ss)*(0.5+0.5*I),seed:R()*100});}}
-    if(L>=2&&fs>0.3&&I>0.3){ACC.ember[i]+=dt*fs*I*(2+spd*0.5)*q*(L===3?1:0.5);
+  const L=lod(), wv=windVec(t), wx=wv[0], wy=wv[1], spd=wv[2], q=budget;
+  const tk=playing?speed:1;
+  if(frontDirty) rebuildFront(t);
+  EDGES.clear(); for(const [i,e] of FRONT) EDGES.set(i,e);
+  for(const [i,fs,ss] of emitters(t)){
+    const I=Math.max(INT[i],0.12), [cx,cy]=cellXY(i), edges=EDGES.get(i)||[];
+    // flames: rate, height and width all scale with the CA-derived intensity
+    if(show.fire&&L>=2&&fs>0.1){
+      ACC.flame[i]+=dt*fs*(14+60*I*I+30*edges.length*I)*q*(L===3?1:0.55);
+      while(ACC.flame[i]>=1){ACC.flame[i]-=1; if(LIVE.flame>=CAP.flame*q) continue;
+        let x=cx+(R()-.5)*CELL*.9, y=cy+(R()-.5)*CELL*.9;
+        if(edges.length&&R()<0.7){const [ex,ey]=edges[(R()*edges.length)|0];   // on the edge facing unburned fuel
+          const along=(R()-.5)*CELL*1.05; x=cx+ex*CELL*(0.32+R()*0.22)+(ey?along:0); y=cy+ey*CELL*(0.32+R()*0.22)+(ex?along:0);}
+        const life=0.55+R()*0.65;
+        spawn('flame',{x,y,z:0,life,h:(8+30*I)*(0.4+0.8*R()*R()+0.3*R())*(0.6+0.4*fs),w:(4+9*I)*(0.6+0.7*R()),
+          v:(R()*SPR.tongue.length)|0,seed:R()*6.28,fl:5+R()*9,str:fs,dx:(R()-.5)*0.6,dy:(R()-.5)*0.6});}}
+    if(show.smoke&&L>=1&&ss>0){
+      ACC.smoke[i]+=dt*ss*(0.6+2.6*I)*q*(L===1?0.55:1);
+      while(ACC.smoke[i]>=1){ACC.smoke[i]-=1; if(LIVE.smoke>=CAP.smoke*q) continue;
+        const flaming=fs>0.3, dense=flaming?I:I*0.35;           // smouldering smoke is thinner and lighter
+        spawn('smoke',{x:cx+(R()-.5)*CELL*.8,y:cy+(R()-.5)*CELL*.8,z:1+R()*3,vz:3+R()*3+7*dense,life:9+R()*8,
+          s0:6+10*I,s1:55+130*dense+R()*45,rot:R()*6.28,vr:(R()-.5)*0.18,v:(R()*8)|0,
+          shade:dense>0.65?0:(dense>0.35?1:2),den:(0.35+0.45*ss)*(0.4+0.6*I)*(flaming?1:0.45),seed:R()*100});}}
+    if(show.embers&&L>=2&&fs>0.35&&I>0.25){
+      ACC.ember[i]+=dt*fs*Math.pow(I,1.5)*(1.4+spd*0.25)*q*(L===3?1:0.5);
       while(ACC.ember[i]>=1){ACC.ember[i]-=1;
-        spawn('ember',{x:cx+(R()-.5)*CELL*.6,y:cy+(R()-.5)*CELL*.6,z:3+R()*6*I,vx:(R()-.5)*3,vy:(R()-.5)*3,vz:6+R()*9*I,life:1.4+R()*1.8,sz:1+R()*1.8,seed:R()*6.28});}}
-    if(L===3&&(ss>0)){ACC.ash[i]+=dt*(0.35+0.6*ss)*q;
-      while(ACC.ash[i]>=1){ACC.ash[i]-=1;
-        spawn('ash',{x:cx+(R()-.5)*CELL,y:cy+(R()-.5)*CELL,z:8+R()*22,vz:-(0.6+R()*0.8),life:4+R()*4,seed:R()*6.28});}}
+        spawn('ember',{x:cx+(R()-.5)*CELL*.7,y:cy+(R()-.5)*CELL*.7,z:4+R()*10*I,vx:(R()-.5)*3,vy:(R()-.5)*3,vz:7+R()*12*I,
+          life:1.5+R()*2.2,sz:0.8+R()*1.6,seed:R()*6.28});}}
+    if(show.ash&&L>=2){const st=cellState(i,t);
+      if(st===2||(st===1&&fs>0.5)){ACC.ash[i]+=dt*(st===2?0.9:0.5)*q;
+        while(ACC.ash[i]>=1){ACC.ash[i]-=1;
+          spawn('ash',{x:cx+(R()-.5)*CELL,y:cy+(R()-.5)*CELL,z:3+R()*12,vz:0.4+R()*1.2,life:5+R()*5,seed:R()*6.28,sz:1+R()*1.4});}}}
   }
-  // wind streaks around the simulation area (direction + relative speed only)
-  if(show.wind&&L>=1&&spd>0.3&&LIVE.streak<CAP.streak*q){
-    const E=HALF*1.6; spawn('streak',{x:(R()-.5)*2*E,y:(R()-.5)*2*E,life:1.6+R()*1.6});
-  }
-  const shear=z=>0.5+0.5*Math.min(1,z/60), tk=playing?speed:1;
-  for(const p of POOL.flame) if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.flame--;continue;}
-    p.z+=p.vz*dt;p.vz*=0.985;p.x+=(p.vx+Math.sin(now*0.006+p.seed)*1.2)*dt;p.y+=(p.vy+Math.cos(now*0.005+p.seed)*1.2)*dt;}
+  if(show.wind&&L>=1&&spd>0.3&&LIVE.streak<CAP.streak*q){const E=HALF*1.6;spawn('streak',{x:(R()-.5)*2*E,y:(R()-.5)*2*E,life:1.6+R()*1.6});}
+  const shear=z=>0.45+0.55*Math.min(1,z/70);
+  for(const p of POOL.flame) if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.flame--;}}
   for(const p of POOL.smoke) if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.smoke--;continue;}
-    const k=shear(p.z),tu=Math.sin(now*0.0007+p.seed+p.y*0.01)*1.6,tv=Math.cos(now*0.0006+p.seed*1.3+p.x*0.01)*1.6;
-    p.x+=(wx*DRIFT_K*tk*k+tu)*dt;p.y+=(wy*DRIFT_K*tk*k+tv)*dt;p.z+=p.vz*dt;p.vz=Math.max(0.5,p.vz*0.995);p.rot+=p.vr*dt;}
+    const a=p.age/p.life, k=shear(p.z), turb=1.2+5*a;           // turbulence grows as the plume ages
+    const tu=Math.sin(now*0.0007+p.seed+p.y*0.013)*turb+Math.sin(now*0.0019+p.seed*2.1)*turb*0.5;
+    const tv=Math.cos(now*0.0006+p.seed*1.3+p.x*0.011)*turb+Math.cos(now*0.0023+p.seed)*turb*0.5;
+    p.x+=(wx*DRIFT_K*tk*k+tu)*dt; p.y+=(wy*DRIFT_K*tk*k+tv)*dt; p.z+=p.vz*dt; p.vz=Math.max(0.6,p.vz*0.992); p.rot+=p.vr*dt;}
   for(const p of POOL.ember) if(p.on){p.age+=dt;if(p.age>=p.life||p.z<0){p.on=false;LIVE.ember--;continue;}
-    p.vz-=4.5*dt;p.x+=(p.vx+wx*DRIFT_K*tk*0.9)*dt;p.y+=(p.vy+wy*DRIFT_K*tk*0.9)*dt;p.z+=p.vz*dt;}
-  for(const p of POOL.ash) if(p.on){p.age+=dt;if(p.age>=p.life||p.z<0){p.on=false;LIVE.ash--;continue;}
-    p.x+=(wx*DRIFT_K*tk*0.35+Math.sin(now*0.003+p.seed)*0.8)*dt;p.y+=(wy*DRIFT_K*tk*0.35+Math.cos(now*0.0025+p.seed)*0.8)*dt;p.z+=p.vz*dt;}
-  for(const p of POOL.streak) if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.streak--;continue;}
-    p.x+=wx*DRIFT_K*0.9*dt;p.y+=wy*DRIFT_K*0.9*dt;}
+    const up=p.age<0.5;                                          // rise in the plume first, then drift downwind
+    p.vz-=(up?1.5:5)*dt; p.px=p.x; p.py=p.y; p.pz=p.z;
+    p.x+=(p.vx+wx*DRIFT_K*tk*(up?0.3:0.95)+Math.sin(now*0.01+p.seed)*2)*dt; p.y+=(p.vy+wy*DRIFT_K*tk*(up?0.3:0.95)+Math.cos(now*0.012+p.seed)*2)*dt; p.z+=p.vz*dt;}
+  for(const p of POOL.ash) if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.ash--;continue;}
+    p.x+=(wx*DRIFT_K*tk*0.4+Math.sin(now*0.003+p.seed)*1.2)*dt; p.y+=(wy*DRIFT_K*tk*0.4+Math.cos(now*0.0025+p.seed)*1.2)*dt; p.z+=p.vz*dt;}
+  for(const p of POOL.streak) if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.streak--;continue;} p.x+=wx*DRIFT_K*0.9*dt;p.y+=wy*DRIFT_K*0.9*dt;}
 }
 
 // ── per-frame drawing ──────────────────────────────────────────────────────
@@ -521,78 +636,124 @@ function onScreen(s,m){return s[0]>-m&&s[1]>-m&&s[0]<CW+m&&s[1]<CH+m;}
 function draw(t,now){
   ctx.setTransform(DPR,0,0,DPR,0,0); ctx.clearRect(0,0,CW,CH);
   if(!H) return;
-  const L=lod(), ex=clamp(1.15/PXM,1,2.6), up=PXM*TILTF;   // ex: small-scale exaggeration so effects stay visible when zoomed out
-  // vegetation representation
-  if(show.veg&&L>=2){
-    ctx.globalCompositeOperation='source-over';
-    const va=L===3?0.62:0.45;
+  // Altitude -> screen offset. Flames are upright billboards anchored at their ground point;
+  // smoke, embers and ash use an oblique factor (at least ~0.5 even when the map is top-down)
+  // so the plume's vertical structure stays readable; the ground anchor never moves.
+  const L=lod(), ex=clamp(1.2/PXM,1,2.6), up=PXM*Math.max(0.5,TILTF), wv=windVec(t);
+  // screen direction of the downwind vector -> flame lean
+  const c0=W2S(0,0), c1=W2S(wv[0]*10/(wv[2]||1),wv[1]*10/(wv[2]||1));
+  const lean=wv[2]>0.3?clamp(wv[2]/12,0,1)*0.55*clamp((c1[0]-c0[0])/(Math.hypot(c1[0]-c0[0],c1[1]-c0[1])||1),-1,1):0;
+
+  // 1. burn scar (organic, continuous)
+  if(P.hasRun){ if(scarDirty||Math.abs(t-scarT)>0.12) renderScar(t); drawScar(); }
+  else { ctx2.setTransform(1,0,0,1,0,0); ctx2.clearRect(0,0,cvs2.width,cvs2.height); }
+
+  // 2. vegetation-density representation (optional)
+  if(show.veg&&L>=2){ctx.globalCompositeOperation='source-over';
     for(const tr of TREES){const s=W2S(tr.x,tr.y);if(!onScreen(s,20))continue;
       const st=cellState(tr.c,t); let sp=SPR.tree[tr.v], r=tr.r;
-      if(st===1){sp=SPR.treeLit;} else if(st===2||st===3){sp=SPR.treeBurnt;r*=0.72;}
-      const d=Math.max(2.5,r*2*PXM);
-      ctx.globalAlpha=va*0.6; ctx.drawImage(SPR.shadow,s[0]-d/2+d*0.18,s[1]-d/2+d*0.14,d,d);   // sun from the north-west
-      ctx.globalAlpha=va; ctx.drawImage(sp,s[0]-d/2,s[1]-d/2-r*up*0.6,d,d);}
-  }
-  ctx.globalAlpha=1;
-  // ground glow under burning and smouldering cells
-  ctx.globalCompositeOperation='lighter';
-  for(let i=0;i<NC;i++){const fs=fireStrength(i,t);if(fs<=0)continue;
-    const [x,y]=cellXY(i),s=W2S(x,y);if(!onScreen(s,120))continue;
-    const fl=0.85+0.15*Math.sin(now*0.013+i*1.7)+0.08*Math.sin(now*0.031+i);
-    const r=Math.max(12,CELL*PXM*(1.1+1.1*INT[i])*fl*(L===0?1.6:1));
-    ctx.globalAlpha=clamp((0.35+0.55*INT[i])*fs,0,0.9); ctx.drawImage(SPR.glow,s[0]-r,s[1]-r,2*r,2*r);
-    const r2=r*0.45; ctx.globalAlpha=clamp(0.5*fs,0,0.7); ctx.drawImage(SPR.glow,s[0]-r2,s[1]-r2,2*r2,2*r2);
-    // burning fuel bed: a few flickering flame clusters spread over the cell, so adjacent
-    // burning cells merge into one continuous front instead of separate icons
-    if(L>=1){const nb=L>=2?4:2;
-      for(let k=0;k<nb;k++){const h1=Math.sin(i*12.9898+k*78.233)*43758.5453, h2=Math.sin(i*39.346+k*11.135)*24634.6345;
-        const ox=(h1-Math.floor(h1)-0.5)*CELL*0.85, oy=(h2-Math.floor(h2)-0.5)*CELL*0.85, b=W2S(x+ox,y+oy);
-        const fk=0.7+0.3*Math.sin(now*0.017+k*2.1+i)+0.15*Math.sin(now*0.043+k+i*0.7);
-        const w=Math.max(4,CELL*PXM*(0.32+0.38*INT[i])*fs*fk*ex*0.8), hh=w*(1.35+0.35*Math.sin(now*0.011+k+i));
-        ctx.globalAlpha=clamp(0.75*fs,0,0.9); ctx.drawImage(SPR.flame[k%2],b[0]-w/2,b[1]-hh*0.8,w,hh);}}
-  }
-  // flames: stretched, swaying additive tongues; colour shifts white -> orange -> red with age
-  for(const p of POOL.flame) if(p.on){const s=W2S(p.x,p.y);if(!onScreen(s,40))continue;
-    const a=p.age/p.life, sp=SPR.flame[a<0.3?0:(a<0.65?1:2)];
-    const w=Math.max(2,p.size*PXM*ex*(1-a*0.55)), h=w*(1.5+0.8*Math.sin(p.seed+now*0.01));
-    ctx.globalAlpha=clamp(Math.pow(1-a,0.7)*(0.55+0.45*p.str),0,1);
-    ctx.drawImage(sp,s[0]-w/2,s[1]-p.z*up*ex-h*0.75,w,h);}
-  // embers
-  for(const p of POOL.ember) if(p.on){const s=W2S(p.x,p.y);if(!onScreen(s,20))continue;
-    const a=p.age/p.life, fl=0.55+0.45*Math.sin(now*0.025+p.seed*9);
-    ctx.globalAlpha=clamp((1-a)*fl,0,1); const d=p.sz*2.4*Math.max(1,Math.min(2,PXM));
-    ctx.drawImage(SPR.ember,s[0]-d/2,s[1]-p.z*up*ex-d/2,d,d);}
-  // smoke: soft procedural puffs, darker and denser near the fire, lighter and diffuse downwind
-  ctx.globalCompositeOperation='source-over';
-  if(show.smoke) for(const p of POOL.smoke) if(p.on){const s=W2S(p.x,p.y);
-    const a=p.age/p.life, size=Math.min(280,(p.s0+(p.s1-p.s0)*Math.sqrt(a))*PXM*Math.max(1,ex*0.8));   // fill-rate cap
-    const sy=s[1]-p.z*up; if(!onScreen([s[0],sy],size))continue;
-    const fade=a<0.12?a/0.12:Math.pow(1-(a-0.12)/0.88,1.4);
-    ctx.globalAlpha=clamp(fade*p.den*0.9,0,0.92);
-    const cr=Math.cos(p.rot)*DPR, sr=Math.sin(p.rot)*DPR;
-    ctx.setTransform(cr,sr,-sr,cr,s[0]*DPR,sy*DPR);
-    ctx.drawImage((a<0.22?SPR.smokeDark:SPR.smoke)[p.v],-size/2,-size/2,size,size);}   // dark, fire-lit near the source
-  ctx.setTransform(DPR,0,0,DPR,0,0);
-  // ash
-  if(L===3) for(const p of POOL.ash) if(p.on){const s=W2S(p.x,p.y);if(!onScreen(s,10))continue;
-    const a=p.age/p.life; ctx.globalAlpha=0.35*(1-a); const d=2.2;
-    ctx.drawImage(SPR.ash,s[0]-d/2,s[1]-p.z*up-d/2,d,d);}
-  // wind streaks + predicted spread direction
-  if(show.wind){
-    const wv=windVec(t), n=Math.hypot(wv[0],wv[1])||1, ux=wv[0]/n, uy=wv[1]/n;
+      if(st===1)sp=SPR.treeLit; else if(st===2||st===3){sp=SPR.treeBurnt;r*=0.72;}
+      const d=Math.max(2.5,r*2*PXM); ctx.globalAlpha=L===3?0.6:0.45; ctx.drawImage(sp,s[0]-d/2,s[1]-d/2,d,d);}}
+
+  // 3. smoke shadows on the ground (sun from the north-west) - gives the plume volume from above
+  if(show.smoke&&L>=1&&budget>0.5){ctx.globalCompositeOperation='source-over';
+    for(const p of POOL.smoke) if(p.on){const a=p.age/p.life; if(a<0.15)continue;
+      const s=W2S(p.x+p.z*0.55,p.y-p.z*0.55), size=Math.min(300,(p.s0+(p.s1-p.s0)*Math.sqrt(a))*PXM*Math.max(1,ex*0.8));
+      if(!onScreen(s,size))continue;
+      ctx.globalAlpha=clamp(0.1*Math.pow(1-a,1.2)*p.den,0,0.12);
+      ctx.drawImage(SPR.smokeShadow[p.v],s[0]-size/2,s[1]-size/2,size,size);}}
+
+  // 4. combustion base: dark-red/orange glowing bed under every burning cell, irregular and
+  //    overlapping its neighbours so the front reads as one band
+  if(show.fire||show.heat) for(let i=0;i<NC;i++){const fs=fireStrength(i,t);if(fs<=0)continue;
+    const [x,y]=cellXY(i), s=W2S(x,y); if(!onScreen(s,140))continue;
+    const I=Math.max(INT[i],0.12), fl=0.82+0.12*Math.sin(now*0.011+i*1.7)+0.08*Math.sin(now*0.029+i);
+    if(show.heat){ctx.globalCompositeOperation='lighter';
+      const r=Math.max(14,CELL*PXM*(0.8+1.3*I)*fl*(L===0?1.7:1));
+      ctx.globalAlpha=clamp((0.07+0.2*I)*fs*fl,0,0.35); ctx.drawImage(SPR.glow,s[0]-r,s[1]-r,2*r,2*r);}
+    if(show.fire&&L>=1){ctx.globalCompositeOperation='lighter';
+      const nb=L>=2?5:2;                     // irregular burning fuel bed: blobs of different size,
+      for(let k=0;k<nb;k++){                 // brightness and flicker, overlapping the neighbours
+        const b=W2S(x+(hash(i,k)-0.5)*CELL*1.05,y+(hash(i,k+5)-0.5)*CELL*1.05);
+        const fk=0.7+0.3*Math.sin(now*0.0013*(6+5*hash(i,k+3))+k*2+i);
+        const rr=Math.max(4,CELL*PXM*(0.22+0.38*hash(i,k+11))*(0.6+0.6*I)*fs*fk);
+        ctx.globalAlpha=clamp((0.18+0.32*hash(i,k+29))*fs*fk,0,0.5);
+        ctx.drawImage(SPR.bed,b[0]-rr*1.3,b[1]-rr*0.7,2.6*rr,1.4*rr);}}}
+
+  // 5. residual embers glowing in freshly burned ground
+  if(show.heat&&L>=2){ctx.globalCompositeOperation='lighter';
+    for(let i=0;i<NC;i++){if(cellState(i,t)!==2)continue; const s0=t-OUT[i]; if(s0>2)continue;
+      const [x,y]=cellXY(i);
+      for(let k=0;k<4;k++){const b=W2S(x+(hash(i,k+60)-0.5)*CELL,y+(hash(i,k+70)-0.5)*CELL); if(!onScreen(b,10))continue;
+        const f=0.5+0.5*Math.sin(now*0.004*(1+hash(i,k))+k*3+i); ctx.globalAlpha=clamp((1-s0/2)*0.8*f,0,1);
+        const d=3+2*hash(i,k+80); ctx.drawImage(SPR.glint,b[0]-d/2,b[1]-d/2,d,d);}}}
+
+  // 6. smoke: dense charcoal at the source, rising, expanding, lightening and drifting downwind
+  if(show.smoke){ctx.globalCompositeOperation='source-over';
+    for(const p of POOL.smoke) if(p.on){const s=W2S(p.x,p.y), a=p.age/p.life;
+      const size=Math.min(320,(p.s0+(p.s1-p.s0)*Math.sqrt(a))*PXM*Math.max(1,ex*0.8));
+      const sy=s[1]-p.z*up; if(!onScreen([s[0],sy],size))continue;
+      const fade=a<0.08?a/0.08:Math.pow(1-(a-0.08)/0.92,1.25);
+      const shade=Math.min(3,p.shade+Math.floor(a*5));
+      ctx.globalAlpha=clamp(fade*p.den*0.85,0,0.7);
+      const cr=Math.cos(p.rot)*DPR, sr=Math.sin(p.rot)*DPR;
+      ctx.setTransform(cr,sr,-sr,cr,s[0]*DPR,sy*DPR);
+      ctx.drawImage(SPR.smoke[shade][p.v],-size/2,-size/2,size,size);}
+    ctx.setTransform(DPR,0,0,DPR,0,0);}
+
+  // 7. flames: tapered tongues rising from the base, leaning downwind, each with its own
+  //    height, width, flicker and lifetime; additive so overlapping tongues build a hot core
+  if(show.fire){ctx.globalCompositeOperation='screen';   // screen, not add: dense walls stay orange instead of blowing out to white
+    for(const p of POOL.flame) if(p.on){const s=W2S(p.x,p.y); if(!onScreen(s,80))continue;
+      const a=p.age/p.life, grow=a<0.2?a/0.2:1-0.55*(a-0.2)/0.8;
+      const flick=0.85+0.15*Math.sin(now*0.001*p.fl*6.28+p.seed);
+      const h=Math.max(6,p.h*PXM*ex*grow*flick), w=Math.max(3,p.w*PXM*ex*(0.8+0.3*grow));
+      ctx.globalAlpha=clamp((a<0.15?a/0.15:Math.pow(1-(a-0.15)/0.85,0.8))*(0.45+0.4*p.str),0,0.75);
+      const rot=lean+p.dx*0.35+Math.sin(now*0.004+p.seed)*0.08;
+      const cs=Math.cos(rot)*DPR, sn=Math.sin(rot)*DPR;
+      ctx.setTransform(cs,sn,-sn,cs,s[0]*DPR,s[1]*DPR);
+      ctx.drawImage(SPR.tongue[p.v],-w/2,-h*0.9,w,h);}      // base sinks slightly into the glowing bed
+    ctx.setTransform(DPR,0,0,DPR,0,0);}
+
+  // 8. embers: small glowing sparks with a short trail, rising then carried downwind
+  if(show.embers){ctx.globalCompositeOperation='lighter';ctx.lineCap='round';
+    for(const p of POOL.ember) if(p.on&&p.px!==undefined){const s=W2S(p.x,p.y),s0=W2S(p.px,p.py); if(!onScreen(s,20))continue;
+      const a=p.age/p.life, f=0.55+0.45*Math.sin(now*0.03+p.seed*9);
+      const y1=s[1]-p.z*up*ex, y0=s0[1]-p.pz*up*ex, dx=s[0]-s0[0], dy=y1-y0, n=Math.hypot(dx,dy)||1, len=Math.min(2.5,0.6+n*0.5);
+      ctx.globalAlpha=clamp((1-a)*f,0,0.9); ctx.strokeStyle=a<0.35?'#ffd27a':(a<0.7?'#ff9433':'#e0521c');
+      ctx.lineWidth=0.9+0.5*p.sz*Math.min(1.5,PXM);
+      ctx.beginPath(); ctx.moveTo(s[0],y1); ctx.lineTo(s[0]-dx/n*len,y1-dy/n*len); ctx.stroke();}}
+
+  // 9. ash: faint grey flakes, slow, drifting farther than embers
+  if(show.ash&&L>=2){ctx.globalCompositeOperation='source-over';
+    for(const p of POOL.ash) if(p.on){const s=W2S(p.x,p.y); if(!onScreen(s,10))continue;
+      const a=p.age/p.life; ctx.globalAlpha=0.45*Math.sin(Math.PI*a); const d=p.sz*Math.max(1,Math.min(2,PXM));
+      ctx.drawImage(SPR.ash,s[0]-d/2,s[1]-p.z*up-d/2,d,d);}}
+
+  // 10. optional fire-front outline: perimeter of the burned area, leading edge brighter
+  if(show.front&&P.hasRun){ctx.globalCompositeOperation='source-over';ctx.lineWidth=1.6;
+    for(const [i,ex2,ey,lead] of PERIM){const [x,y]=cellXY(i),h2=CELL/2;
+      const p0=W2S(x+ex2*h2+ey*h2,y+ey*h2+ex2*h2), p1=W2S(x+ex2*h2-ey*h2,y+ey*h2-ex2*h2);
+      ctx.globalAlpha=lead?0.9:0.45; ctx.strokeStyle=lead?'#ffcf6b':'#e8edf3';
+      ctx.beginPath();ctx.moveTo(p0[0],p0[1]);ctx.lineTo(p1[0],p1[1]);ctx.stroke();}}
+
+  // 11. wind streaks + simulated spread direction (ignition centroid -> current fire centroid;
+  //     wind direction until the fire has moved)
+  if(show.wind){ctx.globalCompositeOperation='source-over';
+    const n=Math.hypot(wv[0],wv[1])||1, ux=wv[0]/n, uy=wv[1]/n;
     ctx.strokeStyle='rgba(232,237,243,0.5)';ctx.lineWidth=1;
-    for(const p of POOL.streak) if(p.on){const a=p.age/p.life;ctx.globalAlpha=Math.sin(a*Math.PI)*0.45;
+    for(const p of POOL.streak) if(p.on){const a=p.age/p.life;ctx.globalAlpha=Math.sin(a*Math.PI)*0.4;
       const s0=W2S(p.x,p.y),s1=W2S(p.x-ux*18,p.y-uy*18);ctx.beginPath();ctx.moveTo(s0[0],s0[1]);ctx.lineTo(s1[0],s1[1]);ctx.stroke();}
-    if(wv[2]>0.3){const c=frontCentreXY(t);if(c){
-      const L2=HALF*0.55,a0=W2S(c[0],c[1]),a1=W2S(c[0]+ux*L2,c[1]+uy*L2),hx=a1[0]-a0[0],hy=a1[1]-a0[1],hl=Math.hypot(hx,hy)||1;
-      ctx.globalAlpha=0.8;ctx.strokeStyle='#e8edf3';ctx.lineWidth=2;ctx.setLineDash([6,5]);
+    const cur=P.hasRun?(centroid(t,[1])||centroid(t,[2,3])):null;
+    let dx=ux,dy=uy,ox=IGN0[0],oy=IGN0[1];
+    if(cur){const mx=cur[0]-IGN0[0],my=cur[1]-IGN0[1],mm=Math.hypot(mx,my);if(mm>CELL*1.5){dx=mx/mm;dy=my/mm;ox=cur[0];oy=cur[1];}else{ox=cur[0];oy=cur[1];}}
+    if(cur||(wv[2]>0.3)){const L2=HALF*0.45,a0=W2S(ox,oy),a1=W2S(ox+dx*L2,oy+dy*L2),hx=a1[0]-a0[0],hy=a1[1]-a0[1],hl=Math.hypot(hx,hy)||1;
+      ctx.globalAlpha=0.75;ctx.strokeStyle='#e8edf3';ctx.lineWidth=2;ctx.setLineDash([6,5]);
       ctx.beginPath();ctx.moveTo(a0[0],a0[1]);ctx.lineTo(a1[0],a1[1]);ctx.stroke();ctx.setLineDash([]);
       const bx=hx/hl,by=hy/hl;ctx.fillStyle='#e8edf3';ctx.beginPath();ctx.moveTo(a1[0]+bx*9,a1[1]+by*9);
       ctx.lineTo(a1[0]-by*6,a1[1]+bx*6);ctx.lineTo(a1[0]+by*6,a1[1]-bx*6);ctx.closePath();ctx.fill();}}
-  }
-  ctx.globalAlpha=1;
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
 }
-function frontCentreXY(t){let sx=0,sy=0,k=0;for(let i=0;i<NC;i++){const s=cellState(i,t);if(s===1||s===5){const [x,y]=cellXY(i);sx+=x;sy+=y;k++;}}return k?[sx/k,sy/k]:null;}
 
 // ── main loop: one requestAnimationFrame for everything ────────────────────
 let last=null, raf=null, frameMs=16, lastStep=-1;
@@ -601,10 +762,10 @@ function loop(now){
   if(last===null) last=now; const dt=Math.min((now-last)/1000,0.05); last=now;
   frameMs=frameMs*0.95+dt*1000*0.05;
   if(frameMs>30) budget=Math.max(0.35,budget-0.01); else if(frameMs<18) budget=Math.min(1,budget+0.005);
-  // a CPU-only laptop is fill-rate bound: drop the canvas resolution before dropping effects further
+  // CPU-only laptops are fill-rate bound: lower the canvas resolution before dropping more effects
   if(budget<=0.36&&frameMs>32&&RS>0.6&&now-(loop.rsT||0)>1500){RS=Math.round((RS-0.1)*10)/10;resize();loop.rsT=now;}
   else if(frameMs<15&&RS<1&&now-(loop.rsT||0)>3000){RS=Math.round((RS+0.1)*10)/10;resize();loop.rsT=now;}
-  if(playing){simT=Math.min(LAST,simT+dt*speed/SEC_PER_STEP);tl.value=String(simT);if(simT>=LAST){setPlaying(false);simDone=true;}}
+  if(playing){simT=Math.min(LAST,simT+dt*speed/SEC_PER_STEP);tl.value=String(simT);if(simT>=LAST)setPlaying(false);}
   const st=Math.floor(simT+1e-6);
   if(data&&st!==lastStep){lastStep=st;syncCells(simT);}
   if(map&&updateProjection()){stepFx(dt,simT,now);draw(simT,now);}
