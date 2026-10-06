@@ -148,6 +148,21 @@ location search, **Geocoding API** or **Places API (New)** (either one; Geocodin
    * Analytics, CSV export of every step and GeoJSON export of the simulated burned cells.
    * The original regional 2-hour projection is kept in an expander.
 
+### Interface
+
+* **Global ticker** (`src/dashboard/ui/global_ticker.py`) on every signed-in page: region, risk level,
+  alert zones, regional mean wind, last refresh, latest spread run (labelled SIMULATED) and whether the
+  FIRMS / OpenWeatherMap feeds are LIVE or DEMO. With no state loaded it says "DEMO / OFFLINE MODE".
+* **Command Center**: hero artwork (`src/dashboard/assets/dashboard_hero.jpg`, an illustrative concept
+  image, captioned as such; its painted numbers are not data), live status strip, wildfire alert panel
+  (latest spread run, or the model's highest-risk zone, always labelled), key metrics, Explore modules,
+  data / system status.
+* **Sidebar**: the active page's button uses the blue → purple → pink gradient (from the first paint);
+  no other element uses it.
+* **Login**: glass card over a blurred copy of the hero artwork. "Create account" explains that accounts
+  are issued by an admin on the Admin page; there is no self-registration.
+* Streamlit's dark theme is set in `.streamlit/config.toml` so built-in widgets match.
+
 ### MySQL (optional - SQLite is used when unset)
 
 Any MySQL 8 host works (Railway, Aiven, TiDB Cloud free tiers, or local):

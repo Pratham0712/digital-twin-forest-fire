@@ -393,6 +393,9 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
                                       duration_minutes=setup["duration_min"],
                                       ignition_points=setup["ignition_points"])
         st.session_state[res_key] = result
+        st.session_state["last_geo_run"] = {"kp": kp}
+        from src.dashboard.ui.global_ticker import render_global_ticker
+        render_global_ticker()                      # show the new run in the global ticker
         fin = result.final
         log_action("simulation", f"Geographic spread at {f.name} ({f.lat:.4f}, {f.lon:.4f}), "
                    f"{f.width_m:.0f}×{f.height_m:.0f} m, {duration_label(setup['duration_min'])}: "

@@ -61,7 +61,13 @@ def set_page(title: str, icon: str = ":material/local_fire_department:"):
                                 layout="wide", initial_sidebar_state="expanded")
         except Exception:
             pass
-    st.markdown(CSS, unsafe_allow_html=True)
+    from src.dashboard.ui.theme import THEME_CSS, active_nav_css
+    from src.dashboard.ui.global_ticker import create_ticker_slot, render_global_ticker
+    st.markdown(CSS + THEME_CSS + active_nav_css(title), unsafe_allow_html=True)
+    # Global status ticker: reserved here so it sits above every page's content;
+    # drawn now from the shared twin and redrawn by ensure_twin() when it changes.
+    create_ticker_slot()
+    render_global_ticker()
 
 
 # ── theme ─────────────────────────────────────────────────────────────────── #
@@ -181,32 +187,11 @@ h1, h2, h3, h4, h5 { font-family: var(--font) !important; color: var(--text) !im
 .nav-card h4 { color: var(--text) !important; margin: 0 0 6px 0; font-size: 16px; }
 .nav-card p { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.55; }
 
-/* ── sidebar navigation: rounded glass cards, blue / pink accents ── */
-[data-testid="stSidebarNav"] { padding-top: 8px; }
-[data-testid="stSidebarNav"] ul { gap: 6px; display: flex; flex-direction: column; }
-[data-testid="stSidebarNav"] ul li { margin: 0 !important; }
-[data-testid="stSidebarNav"] a {
-    position: relative; display: flex !important; align-items: center; gap: 10px; min-height: 40px;
-    padding: 8px 12px 8px 40px !important; border-radius: 12px !important;
-    background: rgba(255,255,255,0.025) !important; border: 1px solid rgba(143,211,255,0.10);
-    transition: background .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
-[data-testid="stSidebarNav"] a span { color: #c3ccd8 !important; font-weight: 600 !important; font-size: 14px !important; }
-[data-testid="stSidebarNav"] a:hover {
-    background: linear-gradient(90deg, rgba(143,211,255,0.08), rgba(255,140,207,0.06)) !important;
-    border-color: rgba(143,211,255,0.38); box-shadow: 0 0 0 1px rgba(143,211,255,0.06), 0 6px 18px rgba(112,215,255,0.10);
-    transform: translateX(2px); }
-[data-testid="stSidebarNav"] a[aria-current="page"] {
-    background: linear-gradient(90deg, rgba(143,211,255,0.16), rgba(217,140,255,0.12)) !important;
-    border: 1px solid transparent;
-    background-clip: padding-box;
-    box-shadow: inset 0 0 0 1px rgba(143,211,255,0.55), 0 0 18px rgba(255,140,207,0.16); }
-[data-testid="stSidebarNav"] a[aria-current="page"] span,
-[data-testid="stSidebarNav"] ul li:first-child a[aria-current="page"]::after { color: #ffffff !important; }
+/* ── sidebar navigation: icon masks (colours / active state live in ui/theme.py) ── */
 [data-testid="stSidebarNav"] a::before {
     content: ""; position: absolute; left: 12px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%);
-    background: linear-gradient(135deg, #8FD3FF, #FF8CCF); -webkit-mask: var(--ico) center / contain no-repeat;
-    mask: var(--ico) center / contain no-repeat; opacity: .85; }
-[data-testid="stSidebarNav"] a[aria-current="page"]::before { opacity: 1; }
+    background: #8A96A6; -webkit-mask: var(--ico) center / contain no-repeat;
+    mask: var(--ico) center / contain no-repeat; }
 [data-testid="stSidebarNav"] li:first-child a::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='7' height='7' rx='1.5'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1.5'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1.5'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1.5'/%3E%3C/svg%3E"); }
 [data-testid="stSidebarNav"] a[href*="What_If"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0'/%3E%3Ccircle cx='16' cy='6' r='2'/%3E%3Ccircle cx='10' cy='12' r='2'/%3E%3Ccircle cx='18' cy='18' r='2'/%3E%3C/svg%3E"); }
 [data-testid="stSidebarNav"] a[href*="Spread_Simulation"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3c1 3 4 4.5 4 8.5a4 4 0 0 1-8 0c0-1.6.8-2.7 1.6-3.6.3 1.4 1.2 2.1 1.9 2.1-.6-2.5.5-5 .5-7z'/%3E%3Cpath d='M5 20h14'/%3E%3C/svg%3E"); }
@@ -215,27 +200,6 @@ h1, h2, h3, h4, h5 { font-family: var(--font) !important; color: var(--text) !im
 [data-testid="stSidebarNav"] a[href*="Model_Insights"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20V10M10 20V4M16 20v-7M22 20H2'/%3E%3C/svg%3E"); }
 [data-testid="stSidebarNav"] a[href*="Admin"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z'/%3E%3Cpath d='M9 12l2 2 4-4'/%3E%3C/svg%3E"); }
 [data-testid="stSidebarNav"] a[href*="Activity_Log"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 6h12M8 12h12M8 18h12'/%3E%3Ccircle cx='4' cy='6' r='1'/%3E%3Ccircle cx='4' cy='12' r='1'/%3E%3Ccircle cx='4' cy='18' r='1'/%3E%3C/svg%3E"); }
-[data-testid="stSidebar"] { background: radial-gradient(420px 260px at 0% 0%, rgba(143,211,255,0.06), transparent 70%),
-                            radial-gradient(380px 260px at 100% 100%, rgba(217,140,255,0.05), transparent 70%), #0b0e13 !important; }
-
-/* ── Command Center platform hero ── */
-.platform-hero { position: relative; display: grid; grid-template-columns: minmax(0,1.05fr) minmax(0,1fr); gap: 0;
-    border-radius: 18px; overflow: hidden; margin-bottom: 18px; border: 1px solid rgba(143,211,255,0.16);
-    background: linear-gradient(135deg, rgba(17,21,27,0.96), rgba(13,16,22,0.96));
-    box-shadow: 0 18px 50px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03); }
-.platform-hero .copy { padding: 26px 28px; display: flex; flex-direction: column; justify-content: center; }
-.platform-hero .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase;
-    background: linear-gradient(90deg, #8FD3FF, #FF8CCF); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.platform-hero h1 { font-size: 28px; line-height: 1.18; margin: 8px 0 8px 0; }
-.platform-hero .sub { color: var(--muted); font-size: 13.5px; line-height: 1.6; max-width: 560px; }
-.platform-hero .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
-.platform-hero .chip { font-size: 11px; color: #cfe9ff; padding: 4px 10px; border-radius: 999px;
-    border: 1px solid rgba(143,211,255,0.25); background: rgba(143,211,255,0.06); }
-.platform-hero .chip.fire { color: #ffc29a; border-color: rgba(255,140,60,0.35); background: rgba(255,107,53,0.08); }
-.platform-hero .meta { margin-top: 14px; font-size: 12px; color: var(--muted); }
-.platform-hero .visual { position: relative; min-height: 250px; }
-.platform-hero .visual svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-@media (max-width: 900px) { .platform-hero { grid-template-columns: 1fr; } .platform-hero .visual { min-height: 200px; } }
 
 [data-testid="stMetricValue"] { font-family: var(--mono) !important; }
 [data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 10px; }
@@ -499,6 +463,8 @@ def ensure_twin(offline: bool, scenario: dict, region, force_refresh: bool,
         st.session_state["_last_region_key"] = _region_key(region)
         st.session_state["_last_offline"] = offline
         st.session_state["_last_scenario"] = scenario
+        from src.dashboard.ui.global_ticker import render_global_ticker
+        render_global_ticker(st.session_state["twin"])
     return st.session_state["twin"]
 
 
@@ -712,106 +678,33 @@ def render_header(summary: dict, offline: bool, subtitle: str = None, region=Non
     """, unsafe_allow_html=True)
 
 
-def render_platform_hero(summary: dict, offline: bool, region=None):
-    """Command Center hero: platform identity + a self-contained SVG illustration
-    (procedural terrain, 25 m grid, simulation box, fire front, wind-driven
-    plume). No external image is needed; it is an illustration, not data."""
-    region = region or REGION
-    ts = summary.get("timestamp", "")[:19].replace("T", " ")
-    badge_cls, badge_txt = ("badge-demo", "DEMO") if offline else ("badge-live", "LIVE")
-    grid = "".join(f'<line x1="{x}" y1="70" x2="{x - 60}" y2="250" />' for x in range(250, 520, 22))
-    grid += "".join(f'<line x1="{250 - k * 3.3:.1f}" y1="{70 + k * 10}" x2="{520 - k * 3.3:.1f}" y2="{70 + k * 10}" />'
-                    for k in range(0, 19))
-    st.markdown(f"""
-<div class="platform-hero">
-  <div class="copy">
-    <div class="eyebrow">Forest Fire Research Command Center</div>
-    <h1>Forest Fire Digital Twin &amp; Wildfire Spread Simulation Platform
-      <span class="badge {badge_cls}" style="font-size:11px;vertical-align:middle">{badge_txt}</span></h1>
-    <div class="sub">Satellite fire detections and weather feed a trained risk model for every grid zone of
-      <b>{region.name}</b>; a cellular-automata model then projects how a fire would spread across real
-      Google satellite geography.</div>
-    <div class="chips">
-      <span class="chip">Google satellite base</span><span class="chip">NASA FIRMS VIIRS</span>
-      <span class="chip">OpenWeatherMap</span><span class="chip">Canadian FWI</span>
-      <span class="chip">XGBoost risk model</span><span class="chip fire">Cellular-automata spread</span>
-    </div>
-    <div class="meta">Last refreshed {ts} UTC · BMS College of Engineering · ISE Batch 42</div>
-  </div>
-  <div class="visual">
-    <svg viewBox="0 0 560 300" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Illustration: simulated fire front on a gridded forest">
-      <defs>
-        <filter id="ph-terrain" x="0" y="0" width="100%" height="100%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.018 0.026" numOctaves="5" seed="7" result="n"/>
-          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.10  0 0 0 0 0.19  0 0 0 0 0.10  0 0 0 1.25 -0.25" result="g"/>
-          <feTurbulence type="fractalNoise" baseFrequency="0.22" numOctaves="2" seed="3" result="f"/>
-          <feColorMatrix in="f" type="matrix" values="0 0 0 0 0.05  0 0 0 0 0.12  0 0 0 0 0.06  0 0 0 0.9 -0.2" result="fg"/>
-          <feBlend in="fg" in2="g" mode="multiply"/>
-        </filter>
-        <linearGradient id="ph-fade" x1="0" x2="1"><stop offset="0" stop-color="#11151b" stop-opacity="1"/>
-          <stop offset="0.28" stop-color="#11151b" stop-opacity="0"/></linearGradient>
-        <linearGradient id="ph-fire" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#b3260a"/>
-          <stop offset="0.45" stop-color="#ff7a1f"/><stop offset="1" stop-color="#ffe9a8"/></linearGradient>
-        <filter id="ph-blur"><feGaussianBlur stdDeviation="6"/></filter>
-        <filter id="ph-glow"><feGaussianBlur stdDeviation="3.2"/></filter>
-        <radialGradient id="ph-smoke"><stop offset="0" stop-color="#b9b6b2" stop-opacity=".55"/>
-          <stop offset="1" stop-color="#b9b6b2" stop-opacity="0"/></radialGradient>
-      </defs>
-      <rect width="560" height="300" fill="#16241a"/>
-      <rect width="560" height="300" filter="url(#ph-terrain)"/>
-      <path d="M0 236 C120 214 210 250 330 222 S 500 188 560 196" stroke="#8a7a5c" stroke-opacity=".45" stroke-width="3" fill="none"/>
-      <g stroke="#e8f0ff" stroke-opacity=".16" stroke-width=".8">{grid}</g>
-      <polygon points="250,70 520,70 460,250 190,250" fill="none" stroke="#8FD3FF" stroke-width="1.8" stroke-opacity=".9"/>
-      <path d="M232 222 C262 205 286 214 312 194 S 360 176 384 160 S 420 146 442 128" fill="none" stroke="#2a1a12" stroke-width="34" stroke-opacity=".55" stroke-linecap="round" filter="url(#ph-blur)"/>
-      <path d="M262 236 C292 220 318 226 344 206 S 392 188 414 172 S 452 158 476 140" fill="none" stroke="#ff6b1f" stroke-width="9" stroke-opacity=".75" stroke-linecap="round" filter="url(#ph-glow)"/>
-      <g fill="url(#ph-fire)" opacity=".95">
-        <path d="M270 234 q4 -16 2 -26 q7 10 6 26z"/><path d="M296 222 q5 -22 1 -32 q9 13 7 32z"/>
-        <path d="M322 214 q4 -18 0 -28 q8 12 6 28z"/><path d="M350 202 q6 -24 1 -36 q10 15 7 36z"/>
-        <path d="M378 188 q4 -17 1 -26 q8 11 6 26z"/><path d="M404 176 q6 -23 2 -34 q9 14 6 34z"/>
-        <path d="M430 162 q4 -16 0 -24 q8 10 6 24z"/><path d="M456 150 q5 -20 1 -30 q9 12 7 30z"/>
-      </g>
-      <g filter="url(#ph-blur)">
-        <ellipse cx="380" cy="140" rx="46" ry="28" fill="url(#ph-smoke)"/><ellipse cx="420" cy="112" rx="62" ry="34" fill="url(#ph-smoke)"/>
-        <ellipse cx="470" cy="86" rx="76" ry="40" fill="url(#ph-smoke)"/><ellipse cx="525" cy="60" rx="90" ry="46" fill="url(#ph-smoke)"/>
-      </g>
-      <g font-family="JetBrains Mono, Consolas, monospace" font-size="10" fill="#cfe9ff">
-        <text x="254" y="64">500 m × 500 m · 25 m cells</text>
-        <text x="372" y="276" fill="#ffc29a">simulated fire front (illustration)</text>
-      </g>
-      <g transform="translate(222 92)"><circle r="15" fill="#0b0f15" fill-opacity=".8" stroke="#8FD3FF" stroke-opacity=".5"/>
-        <path d="M-6 6 L6 -6 M6 -6 L0 -6 M6 -6 L6 0" stroke="#8FD3FF" stroke-width="2" fill="none" stroke-linecap="round"/></g>
-      <rect width="560" height="300" fill="url(#ph-fade)"/>
-    </svg>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-
 def render_kpi_row(summary: dict):
+    """Seven key metrics as cards: label, icon, large value, short context and
+    a coloured accent line (colour is never the only cue: each card also says
+    what the number means)."""
+    from src.dashboard.ui.command_center import svg_icon
     bd = summary.get("severity_breakdown", {})
     max_r = summary.get("max_risk_score", 0)
     alerts = summary.get("total_alerts", 0)
     max_cls = "crit" if max_r > 0.6 else ("warn" if max_r > 0.4 else "ok")
     al_cls = "crit" if alerts > 100 else ("warn" if alerts > 0 else "ok")
-
-    st.markdown(f"""
-    <div class="kpi-row">
-      <div class="kpi"><div class="lbl">Grid zones</div>
-        <div class="val">{summary.get('total_zones', 0)}</div></div>
-      <div class="kpi"><div class="lbl">Active alerts</div>
-        <div class="val {al_cls}">{alerts}</div></div>
-      <div class="kpi"><div class="lbl">Extreme</div>
-        <div class="val {'crit' if bd.get('EXTREME',0) else 'ok'}">{bd.get('EXTREME',0)}</div></div>
-      <div class="kpi"><div class="lbl">High</div>
-        <div class="val {'warn' if bd.get('HIGH',0) else 'ok'}">{bd.get('HIGH',0)}</div></div>
-      <div class="kpi"><div class="lbl">Moderate</div>
-        <div class="val">{bd.get('MODERATE',0)}</div></div>
-      <div class="kpi"><div class="lbl">Peak risk</div>
-        <div class="val {max_cls}">{max_r:.0%}</div></div>
-      <div class="kpi"><div class="lbl">Mean risk</div>
-        <div class="val">{summary.get('mean_risk_score',0):.0%}</div></div>
-    </div>
-    """, unsafe_allow_html=True)
+    ext, high = bd.get("EXTREME", 0), bd.get("HIGH", 0)
+    cards = [
+        ("Grid zones", "grid", f"{summary.get('total_zones', 0)}", "", "neutral", "cells scored by the model"),
+        ("Active alerts", "bell", f"{alerts}", al_cls, al_cls,
+         f"zones at or above {SYSTEM.alert_threshold_pct:.0f}% risk"),
+        ("Extreme", "flame", f"{ext}", "crit" if ext else "ok", "crit" if ext else "ok", "immediate attention"),
+        ("High", "alert", f"{high}", "warn" if high else "ok", "warn" if high else "ok", "elevated risk"),
+        ("Moderate", "eye", f"{bd.get('MODERATE', 0)}", "", "fire", "keep under watch"),
+        ("Peak risk", "gauge", f"{max_r:.0%}", max_cls, max_cls, "highest zone score"),
+        ("Mean risk", "avg", f"{summary.get('mean_risk_score', 0):.0%}", "", "neutral", "regional average"),
+    ]
+    body = "".join(
+        f'<div class="kpi k-{accent}"><div class="top"><div class="lbl">{lbl}</div>'
+        f'<div class="ico">{svg_icon(ico)}</div></div><div class="val {cls}">{val}</div>'
+        f'<div class="ctx">{ctx}</div></div>'
+        for lbl, ico, val, cls, accent, ctx in cards)
+    st.markdown(f'<div class="kpi-row">{body}</div>', unsafe_allow_html=True)
 
 
 # ── render: risk map ──────────────────────────────────────────────────────── #

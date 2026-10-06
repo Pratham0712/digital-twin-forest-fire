@@ -79,37 +79,42 @@ def require_login():
     authenticated - matches the pattern every page already uses for
     set_page()/build_sidebar() being mandatory first calls."""
     _ensure_db_ready()
-    _render_db_status()
 
     if is_logged_in():
+        _render_db_status()
         return
 
-    _, mid, _ = st.columns([1, 1.5, 1])
+    # Login screen: cinematic background + glass card (presentation only; the
+    # credential check below is unchanged). There is no self-registration, so
+    # "Create account" explains how accounts are issued instead of faking one.
+    from src.dashboard.ui.login import BRAND_HTML, CREATE_ACCOUNT_HTML, FOOT_HTML, login_css
+    st.markdown(login_css(), unsafe_allow_html=True)
+    _, mid, _ = st.columns([1, 1.25, 1])
     with mid:
-        st.markdown(
-            "<div class='hero' style='margin-top:48px;'>"
-            "<div class='eyebrow'>BMS College of Engineering</div>"
-            "<h1>Forest Fire Digital Twin</h1>"
-            "<div class='sub'>Sign in to open the command center.</div></div>",
-            unsafe_allow_html=True,
-        )
-    with mid:
-        with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Sign in", use_container_width=True)
-
-        if submitted:
-            role = db.verify_user(username.strip(), password)
-            if role:
-                st.session_state["auth_user"] = username.strip()
-                st.session_state["auth_role"] = role
-                db.log_activity("login", f"Signed in ({role})", actor=username.strip())
-                st.rerun()
-            else:
-                db.log_activity("login_failed", "Incorrect username or password",
-                                actor=username.strip()[:80] or "unknown")
-                st.error("Incorrect username or password.")
+        with st.container(key="login_card"):
+            st.markdown(BRAND_HTML, unsafe_allow_html=True)
+            if db.fallback_reason():
+                st.caption("The cloud database is not reachable; this session uses the local database.")
+            tab_in, tab_new = st.tabs(["Sign in", "Create account"])
+            with tab_in:
+                with st.form("login_form", clear_on_submit=False):
+                    username = st.text_input("Username", placeholder="Enter your username")
+                    password = st.text_input("Password", type="password", placeholder="Enter your password")
+                    submitted = st.form_submit_button("Sign in", use_container_width=True)
+                if submitted:
+                    role = db.verify_user(username.strip(), password)
+                    if role:
+                        st.session_state["auth_user"] = username.strip()
+                        st.session_state["auth_role"] = role
+                        db.log_activity("login", f"Signed in ({role})", actor=username.strip())
+                        st.rerun()
+                    else:
+                        db.log_activity("login_failed", "Incorrect username or password",
+                                        actor=username.strip()[:80] or "unknown")
+                        st.error("Incorrect username or password.")
+            with tab_new:
+                st.markdown(CREATE_ACCOUNT_HTML, unsafe_allow_html=True)
+            st.markdown(FOOT_HTML, unsafe_allow_html=True)
     st.stop()
 
 
