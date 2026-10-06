@@ -20,6 +20,7 @@ from src.dashboard.dashboard_common import (
 )
 
 from src.auth.auth_gate import require_login, render_user_badge_in_sidebar
+from src.dashboard.geo_spread import render_focus_selector, apply_and_open_spread
 
 set_page("What-If Simulator")
 require_login()
@@ -45,8 +46,13 @@ st.caption(
     "yourself and press **Apply scenario** when ready."
 )
 scenario, just_applied_preset = render_scenario_controls("wi")
+focus_choice = render_focus_selector(region, key="wi_focus")
 
-run = st.button("Apply scenario", type="primary", use_container_width=True)
+b_apply, b_open = st.columns(2)
+run = b_apply.button("Apply scenario", use_container_width=True)
+open_spread = b_open.button("Apply Scenario & Open Spread Simulation", type="primary",
+                            use_container_width=True)
+run = run or open_spread
 
 region_sig = (region.name, region.min_lat, region.max_lat, region.min_lon, region.max_lon)
 need_recompute = (
@@ -71,6 +77,9 @@ if need_recompute:
     st.session_state["wi_ca_history"] = None
 
 twin = st.session_state["_wi_twin"]
+if open_spread:
+    # Same twin, same scenario: Module 2 receives exactly what was computed here.
+    apply_and_open_spread(twin, scenario, focus_choice)
 snap = twin.current_snapshot
 summary = twin.get_summary()
 

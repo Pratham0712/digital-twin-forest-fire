@@ -134,6 +134,7 @@ class DataIngestionModule:
                 temp_c=self.scenario.get("temp_c"),
                 wind_speed_ms=self.scenario.get("wind_speed_ms"),
                 humidity_pct=self.scenario.get("humidity_pct"),
+                wind_from_deg=self.scenario.get("wind_from_deg"),
             )
         return self.weather.fetch_grid(grid_points)
 

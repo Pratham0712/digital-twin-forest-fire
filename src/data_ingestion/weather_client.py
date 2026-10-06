@@ -220,9 +220,13 @@ class WeatherClient:
     def generate_sample(grid_points: List[dict], seed: Optional[int] = None,
                          temp_c: Optional[float] = None,
                          wind_speed_ms: Optional[float] = None,
-                         humidity_pct: Optional[float] = None) -> pd.DataFrame:
+                         humidity_pct: Optional[float] = None,
+                         wind_from_deg: Optional[float] = None) -> pd.DataFrame:
         """Synthetic weather generator. Pass temp_c/wind_speed_ms/humidity_pct
-        to center the spread around a chosen scenario value."""
+        to center the spread around a chosen scenario value. wind_from_deg
+        (meteorological convention: the bearing the wind blows FROM) gives
+        every point that direction +/- 15 deg; without it the direction is
+        random per point, as before."""
         import numpy as np
         rng = np.random.default_rng(seed)
         n = len(grid_points)
@@ -241,5 +245,9 @@ class WeatherClient:
             "clouds_pct": rng.integers(0, 100, n),
             "weather_main": rng.choice(["Clear", "Clouds", "Rain"], n, p=[0.6, 0.3, 0.1]),
         })
+        if wind_from_deg is not None:
+            # Reuses the uniform draw above (no extra random numbers), so every
+            # other column is identical to a run without a wind direction.
+            df["wind_deg"] = (float(wind_from_deg) + (df["wind_deg"] - 180.0) / 12.0) % 360.0
         df["fetched_at"] = datetime.now(timezone.utc).isoformat()
         return df

@@ -40,6 +40,9 @@ if _secret("FIRMS_MAP_KEY"):
     os.environ["FIRMS_MAP_KEY"] = _secret("FIRMS_MAP_KEY")
 if _secret("OWM_API_KEY"):
     os.environ["OWM_API_KEY"] = _secret("OWM_API_KEY")
+for _k in ("GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_MAP_ID"):
+    if _secret(_k):
+        os.environ[_k] = _secret(_k)
 
 
 def set_page(title: str, icon: str = ":material/local_fire_department:"):
@@ -553,7 +556,7 @@ def render_scenario_controls(key_prefix: str):
     requiring an explicit "Apply" click for manual slider drags (recomputing
     ~1400 zones on every drag tick would be janky).
     """
-    defaults = dict(n_hotspots=8, temp_c=32, wind_speed_ms=5.0, humidity_pct=40)
+    defaults = dict(n_hotspots=8, temp_c=32, wind_speed_ms=5.0, humidity_pct=40, wind_from_deg=225)
     for k, v in defaults.items():
         sk = f"{key_prefix}_{k}"
         if sk not in st.session_state:
@@ -577,6 +580,12 @@ def render_scenario_controls(key_prefix: str):
         temp_c = st.slider("Temperature (°C)", 15, 48, key=f"{key_prefix}_temp_c")
     with c2:
         wind_speed_ms = st.slider("Wind speed (m/s)", 0.0, 20.0, step=0.5, key=f"{key_prefix}_wind_speed_ms")
+        wind_from_deg = st.slider("Wind direction (blowing FROM, °)", 0, 355, step=5,
+                                  key=f"{key_prefix}_wind_from_deg",
+                                  help="Meteorological convention: 225° = wind from the south-west, "
+                                       "so fire and smoke are pushed towards the north-east.")
+        st.caption(f"Wind from the {_compass_direction_name(wind_from_deg)} → pushes fire towards the "
+                   f"{_compass_direction_name(wind_from_deg + 180)}")
         humidity_pct = st.slider("Relative humidity (%)", 0, 100, key=f"{key_prefix}_humidity_pct")
 
     just_applied_label = st.session_state.pop(f"_{key_prefix}_just_applied", None)
@@ -584,7 +593,8 @@ def render_scenario_controls(key_prefix: str):
         st.success(f"Preset loaded: {just_applied_label} — sliders updated above.")
 
     scenario = {"n_hotspots": n_hotspots, "temp_c": temp_c,
-                "wind_speed_ms": wind_speed_ms, "humidity_pct": humidity_pct}
+                "wind_speed_ms": wind_speed_ms, "humidity_pct": humidity_pct,
+                "wind_from_deg": wind_from_deg}
     return scenario, bool(just_applied_label)
 
 

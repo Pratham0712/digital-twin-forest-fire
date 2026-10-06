@@ -117,7 +117,24 @@ are set. For real data:
 ```
 FIRMS_MAP_KEY=your_key_here
 OWM_API_KEY=your_key_here
+GOOGLE_MAPS_API_KEY=your_key_here   # Spread Simulation satellite map (Maps JavaScript API)
+GOOGLE_MAPS_MAP_ID=                 # optional vector Map ID for 3D tilt / rotation
 ```
+
+### What-If -> Spread Simulation
+
+1. **What-If Simulator**: set temperature, humidity, wind speed, wind direction
+   (the bearing the wind blows FROM) and seeded hotspots, pick the focus area
+   (Bandipur Tiger Reserve by default), then press
+   **Apply Scenario & Open Spread Simulation**.
+2. **Spread Simulation** opens on Google satellite imagery of that area, with a
+   500 m x 500 m grid of 25 m cells drawn on the real coordinates. **Run
+   Simulation** runs the project's `FireSpreadSimulator` on that grid, using
+   the FFMC / BUI / NDVI of the regional grid zone, the scenario wind and a DEM
+   sample (Open-Topo-Data / Open-Meteo, cached in `models/focus_terrain/`).
+   The map then plays the spread with wind-driven fire, smoke, embers, ash and
+   burned ground; play / pause / reset / 1x-2x-5x and the camera presets run in
+   the browser. The original regional 2-hour projection is kept in an expander.
 
 ### MySQL (optional - SQLite is used when unset)
 
@@ -241,6 +258,11 @@ main.py                                Single entry point, runs the full pipelin
   rather than a full recursive carry-forward (station data has gaps).
 - CA spread uses real/synthetic elevation for slope but does not model
   fire suppression, roads, or firebreaks.
+- The 25 m local spread (Spread Simulation map) uses the same CA with a
+  local-scale base spread probability (`SystemConfig.local_ca_base_spread_prob`
+  = 0.8; the regional CA keeps 0.35) and uniform fuel inside the 500 m area.
+  It is not yet validated against observed fire perimeters. Vegetation drawn
+  on the map is a procedural representation, not individual real trees.
 - Without `DATABASE_URL`, the scheduler and dashboard share one local
   SQLite file; set `DATABASE_URL` for any multi-instance or cloud deployment.
 
