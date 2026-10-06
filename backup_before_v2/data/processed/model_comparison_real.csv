@@ -1,0 +1,4 @@
+Model,accuracy,precision,recall,f1_score,auc_roc,avg_precision,false_negative_rate
+Random Forest,0.7523,0.1224,0.7036,0.2086,0.8069,0.1422,0.2964
+XGBoost,0.705,0.1131,0.7833,0.1977,0.8093,0.1516,0.2167
+CNN+LSTM,0.7054,0.1103,0.7485,0.1922,0.7998,0.1514,0.2515

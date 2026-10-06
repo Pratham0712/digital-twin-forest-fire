@@ -1,0 +1,4 @@
+Model,accuracy,precision,recall,f1_score,auc_roc,avg_precision,false_negative_rate
+Random Forest,0.75,0.1235,0.7352,0.2115,0.824,0.2012,0.2648
+XGBoost,0.6783,0.105,0.8044,0.1857,0.8162,0.2036,0.1956
+"XGBoost (v1, weather only)",0.6021,0.085,0.7913,0.1535,0.754,0.1072,0.2087

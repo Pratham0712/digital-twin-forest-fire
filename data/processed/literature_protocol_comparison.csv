@@ -1,0 +1,15 @@
+protocol,features,train_rows,test_rows,test_fire_rate,accuracy,precision,recall,f1,auc,note,accuracy_sd
+"A  Ours: temporal hold-out 2025, threshold 0.5",v2 (weather + fire history),424200,211400,0.0435,0.9564,0.4878,0.0414,0.0764,0.8703,"unseen season, natural fire rate; threshold 0.500",
+"A  Ours: temporal hold-out 2025, ALERT threshold",v2 (weather + fire history),424200,211400,0.0435,0.9182,0.256,0.4623,0.3295,0.8703,"unseen season, natural fire rate; threshold 0.130",
+"A  Ours: temporal hold-out 2025, EARLY-WARNING threshold",v2 (weather + fire history),424200,211400,0.0435,0.7575,0.1314,0.8155,0.2264,0.8703,"unseen season, natural fire rate; threshold 0.040",
+"B  Random 80/20 split, natural fire rate",v2 (weather + fire history),508480,127120,0.0419,0.9594,0.6466,0.0686,0.1241,0.8748,same fires/zones/adjacent days on both sides; 'predict no fire' alone scores 95.8%,
+"C  Random 80/20 split, balanced 1:1",v2 (weather + fire history),42658,10664,0.5,0.7842,0.7654,0.8198,0.7916,0.8713,"test set also balanced, so chance = 50% and easy negatives are discarded",
+"D  244-row balanced sample, random 70/30 (20 repeats)",v2 (weather + fire history),170,74,0.5656,0.7399,0.7541,0.806,0.7781,0.796,tiny sample drawn from many days; scores swing with the draw,0.0493
+"E  Balanced-trained (2023-24), tested on real 2025",v2 (weather + fire history),34930,211400,0.0435,0.7698,0.1355,0.7981,0.2317,0.8673,"same trees as a 'balanced' paper model, but scored on real-world class balance",
+"A  Ours: temporal hold-out 2025, threshold 0.5",weather only,424200,211400,0.0435,0.9565,0.0,0.0,0.0,0.8044,"unseen season, natural fire rate; threshold 0.500",
+"A  Ours: temporal hold-out 2025, ALERT threshold",weather only,424200,211400,0.0435,0.9268,0.1945,0.2172,0.2052,0.8044,"unseen season, natural fire rate; threshold 0.130",
+"A  Ours: temporal hold-out 2025, EARLY-WARNING threshold",weather only,424200,211400,0.0435,0.7395,0.1113,0.7141,0.1926,0.8044,"unseen season, natural fire rate; threshold 0.040",
+"B  Random 80/20 split, natural fire rate",weather only,508480,127120,0.0419,0.9581,0.0,0.0,0.0,0.8246,same fires/zones/adjacent days on both sides; 'predict no fire' alone scores 95.8%,
+"C  Random 80/20 split, balanced 1:1",weather only,42658,10664,0.5,0.7391,0.7109,0.8061,0.7555,0.8224,"test set also balanced, so chance = 50% and easy negatives are discarded",
+"D  244-row balanced sample, random 70/30 (20 repeats)",weather only,170,74,0.5656,0.7041,0.7347,0.7536,0.7408,0.7428,tiny sample drawn from many days; scores swing with the draw,0.05
+"E  Balanced-trained (2023-24), tested on real 2025",weather only,34930,211400,0.0435,0.7352,0.1103,0.7198,0.1912,0.8046,"same trees as a 'balanced' paper model, but scored on real-world class balance",

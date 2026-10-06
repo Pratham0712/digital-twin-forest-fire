@@ -1,0 +1,3 @@
+region,season,fire_rate,auc_roc,avg_precision,ap_over_base_rate,recall_top10pct,lift_top10pct,alert_flagged_share,alert_precision_lift
+Karnataka Western Ghats,2025,0.0435,0.8704,0.2606,5.99,0.527,5.27,0.0854,5.65
+Karnataka Western Ghats,2026,0.0456,0.8162,0.2036,4.46,0.4164,4.16,0.0739,4.66

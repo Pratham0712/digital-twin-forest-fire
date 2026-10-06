@@ -1,0 +1,13 @@
+flagged_share,zone_days_flagged,fires_captured,recall,precision,lift_vs_random,region,season
+0.01,2114,944,0.1027,0.4465,10.27,Karnataka Western Ghats,2025
+0.02,4228,1699,0.1848,0.4018,9.24,Karnataka Western Ghats,2025
+0.05,10570,3223,0.3505,0.3049,7.01,Karnataka Western Ghats,2025
+0.1,21140,4846,0.527,0.2292,5.27,Karnataka Western Ghats,2025
+0.2,42280,6690,0.7275,0.1582,3.64,Karnataka Western Ghats,2025
+0.3,63420,7808,0.8491,0.1231,2.83,Karnataka Western Ghats,2025
+0.01,434,175,0.0884,0.4032,8.84,Karnataka Western Ghats,2026
+0.02,868,294,0.1486,0.3387,7.43,Karnataka Western Ghats,2026
+0.05,2170,530,0.2678,0.2442,5.36,Karnataka Western Ghats,2026
+0.1,4340,824,0.4164,0.1899,4.16,Karnataka Western Ghats,2026
+0.2,8680,1238,0.6256,0.1426,3.13,Karnataka Western Ghats,2026
+0.3,13020,1481,0.7484,0.1137,2.49,Karnataka Western Ghats,2026

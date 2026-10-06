@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+*.egg-info/
+.ipynb_checkpoints/
+data/raw/*.csv
+data/processed/*.csv
+models/*.pkl
+models/*.h5
+models/*.keras
+data/*.db
+.vscode/
+.DS_Store
+
+# Small files the deployed app needs (the rules above would otherwise hide them)
+!data/processed/india_model_by_state.csv
+!data/processed/model_comparison_real.csv
+!data/processed/model_comparison_alert.csv
+!data/processed/alert_tier_performance.csv
+!data/processed/literature_protocol_comparison.csv
+!data/archive/fires_presets.csv.gz
+!data/processed/eval_*.csv
+!data/processed/model_comparison_2026.csv
+!data/processed/model_comparison_alert_2026.csv
+!data/processed/india_model_by_state_2026.csv
