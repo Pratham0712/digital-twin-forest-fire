@@ -1,16 +1,17 @@
+# Runtime dependencies: everything the dashboard, scheduler and database need.
+# Streamlit Community Cloud installs only this file, so it is kept lean
+# (TensorFlow, SHAP, matplotlib and other training-only packages live in
+# requirements-train.txt).
 pandas>=2.0
 numpy>=1.24
 scipy>=1.10
 requests>=2.31
 scikit-learn>=1.3
 xgboost>=2.0
-tensorflow>=2.15
-streamlit>=1.32
+streamlit==1.61.1  # pinned to the tested version; needs st.fragment(run_every=...) for self-refresh
 plotly>=5.20
-folium>=0.16
-streamlit-folium>=0.20
-geopandas>=0.14
 python-dotenv>=1.0
-meteostat>=2.1
-pytest>=8.0
-shap>=0.45
+apscheduler>=3.10
+sqlalchemy>=2.0  # storage layer: same code for MySQL (DATABASE_URL) and the local SQLite fallback
+pymysql>=1.1     # MySQL driver used by DATABASE_URL=mysql+pymysql://...
+cryptography>=42 # required by PyMySQL for MySQL 8 / hosted MySQL (caching_sha2_password)

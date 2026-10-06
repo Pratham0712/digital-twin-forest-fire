@@ -1,0 +1,5 @@
+region,scoring_grid,cell_days,fire_rate,auc_roc,avg_precision,avg_precision_over_base_rate,season
+Karnataka Western Ghats,native grid,211400,0.0435,0.8704,0.2606,5.99,2025
+Karnataka Western Ghats,0.5 degree blocks,8456,0.3302,0.8805,0.7837,2.37,2025
+Karnataka Western Ghats,native grid,43400,0.0456,0.8162,0.2036,4.46,2026
+Karnataka Western Ghats,0.5 degree blocks,1736,0.3831,0.8096,0.7078,1.85,2026

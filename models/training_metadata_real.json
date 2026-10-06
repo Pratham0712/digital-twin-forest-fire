@@ -9,8 +9,8 @@
     "2025-01-01",
     "2025-05-31"
   ],
-  "train_positive_rate": 0.044332861857614335,
-  "test_positive_rate": 0.04639072847682119,
+  "train_positive_rate": 0.04117161716171617,
+  "test_positive_rate": 0.04350047303689688,
   "feature_columns": [
     "wx_temperature_c",
     "wx_humidity_pct",
@@ -21,10 +21,25 @@
     "dc",
     "bui",
     "fwi",
-    "ndvi",
     "month",
     "day_of_year",
-    "fwi_lag1"
+    "fwi_lag1",
+    "zone_clim",
+    "nbr_clim",
+    "latitude",
+    "longitude",
+    "fire_lag1",
+    "fire_7d",
+    "fire_10d",
+    "nbr3_lag1",
+    "nbr5_7d",
+    "days_since_fire",
+    "region_fires_lag1",
+    "elev_m",
+    "slope_pct"
   ],
-  "split_method": "temporal - train 2023-2024, test 2025 (held-out year); fwi_lag1 replaces fwi_roll7 to avoid train/inference mismatch"
+  "feature_set_version": 3,
+  "xgboost_decision_threshold": 0.04,
+  "xgboost_alert_threshold": 0.12499999999999997,
+  "split_method": "temporal - train 2023-2024, test 2025 (held-out year); fwi_lag1 replaces fwi_roll7 to avoid train/inference mismatch; fire-history features use only days t-10..t-1; zone climatology is leave-one-season-out on train rows"
 }

@@ -1,0 +1,7 @@
+{
+  "t_moderate": 0.04,
+  "t_high": 0.12499999999999997,
+  "t_extreme": 0.34363046288490295,
+  "high_precision": 0.25,
+  "extreme_precision": 0.5
+}

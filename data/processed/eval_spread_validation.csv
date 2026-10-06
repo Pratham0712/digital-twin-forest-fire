@@ -1,0 +1,13 @@
+season,setting,horizon_hours,method,days_scored,cells_predicted,new_fire_cells_next_day,cells_correct,precision,recall,f1,base_spread_prob
+2025,live setting,2,Cellular automaton (this system),40,6146,2109,706.0,0.1149,0.3348,0.171,0.35
+2025,live setting,2,Spread to every neighbour (no physics),40,8800,2109,960.0,0.1091,0.4552,0.176,0.35
+2025,live setting,2,"Random cells, same count as the automaton",40,6146,2109,350.5,0.057,0.1662,0.0849,0.35
+2025,live setting,24,Cellular automaton (this system),40,6855,2109,751.0,0.1096,0.3561,0.1676,0.35
+2025,live setting,24,Spread to every neighbour (no physics),40,8800,2109,960.0,0.1091,0.4552,0.176,0.35
+2025,live setting,24,"Random cells, same count as the automaton",40,6855,2109,379.1,0.0553,0.1798,0.0846,0.35
+2026,live setting,2,Cellular automaton (this system),30,4851,1610,515.0,0.1062,0.3199,0.1594,0.35
+2026,live setting,2,Spread to every neighbour (no physics),30,6769,1610,663.0,0.0979,0.4118,0.1583,0.35
+2026,live setting,2,"Random cells, same count as the automaton",30,4851,1610,233.7,0.0482,0.1452,0.0723,0.35
+2026,live setting,24,Cellular automaton (this system),30,5578,1610,555.0,0.0995,0.3447,0.1544,0.35
+2026,live setting,24,Spread to every neighbour (no physics),30,6769,1610,663.0,0.0979,0.4118,0.1583,0.35
+2026,live setting,24,"Random cells, same count as the automaton",30,5578,1610,265.4,0.0476,0.1648,0.0738,0.35

@@ -93,6 +93,32 @@ def _pick_best_threshold(y_val, y_prob_val, grid=None, min_recall: float = 0.80)
     return best[0]
 
 
+ALERT_ACCURACY_TARGET = 0.92
+
+
+def _pick_accuracy_threshold(y_val, y_prob_val, target: float = ALERT_ACCURACY_TARGET) -> float:
+    """
+    Second operating point ("alert"): the LOWEST threshold whose accuracy on
+    the internal validation split reaches `target`, i.e. the one that keeps
+    as much recall as possible while being >= target accurate. Chosen on
+    validation data only, like the early-warning threshold above.
+
+    The two thresholds are two points on the same model's ROC curve:
+      early warning -> catches ~80% of fires, many false alarms
+      alert         -> >= 92% of all zone-days classified correctly,
+                       fewer fires caught but alerts are far more reliable
+    """
+    if len(np.unique(y_val)) < 2:
+        return SYSTEM.alert_threshold_pct / 100
+    grid = np.arange(0.01, 0.99, 0.005)
+    accs = np.array([accuracy_score(y_val, (y_prob_val >= t).astype(int)) for t in grid])
+    ok = np.where(accs >= target)[0]
+    if ok.size:
+        return float(grid[ok.min()])
+    logger.warning("Accuracy target %.2f not reachable on validation (best %.3f)", target, accs.max())
+    return float(grid[int(accs.argmax())])
+
+
 class RandomForestModel:
     """Baseline tabular model - fast, interpretable, robust to noisy features."""
 
@@ -103,6 +129,7 @@ class RandomForestModel:
         )
         self.feature_names_ = None
         self.threshold_ = SYSTEM.alert_threshold_pct / 100  # overwritten by fit() with a validation-picked value
+        self.alert_threshold_ = self.threshold_               # second operating point, also set by fit()
 
     def fit(self, X: pd.DataFrame, y: pd.Series, tune: bool = False):
         self.feature_names_ = list(X.columns)
@@ -149,7 +176,9 @@ class RandomForestModel:
         val_proba = self.model.predict_proba(X_val)
         y_prob_val = val_proba[:, 1] if val_proba.shape[1] > 1 else np.zeros(len(X_val))
         self.threshold_ = _pick_best_threshold(y_val, y_prob_val)
-        logger.info("RF selected decision threshold: %.2f (via internal validation split)", self.threshold_)
+        self.alert_threshold_ = _pick_accuracy_threshold(y_val, y_prob_val)
+        logger.info("RF selected decision threshold: %.2f, alert threshold %.3f (via internal validation split)",
+                    self.threshold_, self.alert_threshold_)
         return self
 
     def predict(self, X: pd.DataFrame, threshold: float = None):
@@ -186,6 +215,7 @@ class XGBoostModel:
         )
         self.feature_names_ = None
         self.threshold_ = SYSTEM.alert_threshold_pct / 100  # overwritten by fit() with a validation-picked value
+        self.alert_threshold_ = self.threshold_               # second operating point, also set by fit()
 
     def fit(self, X: pd.DataFrame, y: pd.Series, tune: bool = False):
         self.feature_names_ = list(X.columns)
@@ -213,6 +243,7 @@ class XGBoostModel:
                 self.model.set_params(eval_metric="aucpr", early_stopping_rounds=20)
                 self.model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
                 self.threshold_ = _pick_best_threshold(y_val, self.model.predict_proba(X_val)[:, 1])
+                self.alert_threshold_ = _pick_accuracy_threshold(y_val, self.model.predict_proba(X_val)[:, 1])
                 logger.info("XGB selected decision threshold: %.2f (via internal validation split)", self.threshold_)
                 return self
             param_dist = {
@@ -251,8 +282,11 @@ class XGBoostModel:
         # split already carved out above for early stopping - never the test
         # set. XGBoost's calibration can differ sharply from RF/CNN-LSTM's
         # (confirmed empirically), so each model gets its own threshold.
-        self.threshold_ = _pick_best_threshold(y_val, self.model.predict_proba(X_val)[:, 1])
-        logger.info("XGB selected decision threshold: %.2f (via internal validation split)", self.threshold_)
+        p_val = self.model.predict_proba(X_val)[:, 1]
+        self.threshold_ = _pick_best_threshold(y_val, p_val)
+        self.alert_threshold_ = _pick_accuracy_threshold(y_val, p_val)
+        logger.info("XGB selected decision threshold: %.2f, alert threshold %.3f (via internal validation split)",
+                    self.threshold_, self.alert_threshold_)
         return self
 
     def predict(self, X: pd.DataFrame, threshold: float = None):
@@ -287,6 +321,7 @@ class CNNLSTMModel:
         self.n_days = n_days
         self.n_features = n_features
         self.threshold_ = SYSTEM.alert_threshold_pct / 100  # overwritten by fit() with a validation-picked value
+        self.alert_threshold_ = self.threshold_               # second operating point, also set by fit()
 
         inp = layers.Input(shape=(n_days, n_features))
         x = layers.Conv1D(64, kernel_size=2, activation="relu", padding="same")(inp)
@@ -343,7 +378,9 @@ class CNNLSTMModel:
 
         val_proba = self.model.predict(X_val_scaled, verbose=0).ravel()
         self.threshold_ = _pick_best_threshold(y_val, val_proba)
-        logger.info("CNN+LSTM selected decision threshold: %.2f (via internal validation split)", self.threshold_)
+        self.alert_threshold_ = _pick_accuracy_threshold(y_val, val_proba)
+        logger.info("CNN+LSTM selected decision threshold: %.2f, alert threshold %.3f (via internal validation split)",
+                    self.threshold_, self.alert_threshold_)
         return self
 
     def predict(self, X_seq: np.ndarray, threshold: float = None):

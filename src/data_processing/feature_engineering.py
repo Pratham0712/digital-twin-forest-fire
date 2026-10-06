@@ -14,6 +14,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from src.ml_models.fire_history import FEATURE_COLUMNS_V2
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,7 +106,9 @@ def compute_bui(dmc: np.ndarray, dc: np.ndarray) -> np.ndarray:
 
 def compute_fwi(ffmc: np.ndarray, bui: np.ndarray, wind_ms: np.ndarray) -> np.ndarray:
     """Fire Weather Index - overall fire intensity potential, combines ISI and BUI."""
-    wind_kmh = wind_ms * 3.6
+    ffmc = np.asarray(ffmc, dtype="float64")
+    bui = np.asarray(bui, dtype="float64")
+    wind_kmh = np.asarray(wind_ms, dtype="float64") * 3.6
     f_ffmc = 91.9 * np.exp(-0.1386 * (101 - ffmc)) * (1 + (101 - ffmc) ** 5.31 / 4.93e7)
     isi = f_ffmc * np.exp(0.05039 * wind_kmh)
 
@@ -117,7 +121,7 @@ def compute_fwi(ffmc: np.ndarray, bui: np.ndarray, wind_ms: np.ndarray) -> np.nd
     # even though that value is discarded. Suppress just this expected,
     # harmless warning rather than the b<=1 rows' correct results.
     with np.errstate(invalid="ignore"):
-        b_high = np.exp(2.72 * (0.434 * np.log(b.clip(min=1e-6))) ** 0.647)
+        b_high = np.exp(2.72 * (0.434 * np.log(np.clip(b, 1e-6, None))) ** 0.647)
     fwi = np.where(b <= 1, b, b_high)
     return np.clip(fwi, 0, None)
 
@@ -143,7 +147,13 @@ def synthetic_ndvi_independent(zone_ids, rain_mm):
     see the fire label - depends only on a fixed per-zone baseline plus
     real rainfall, with zero reference to fire occurrence.
     """
-    base = np.array([0.35 + 0.40 * ((hash(str(z)) % 1000) / 1000.0) for z in zone_ids])
+    # hashlib, not hash(): Python salts str hashes per process, which made
+    # this value change on every restart (training and live disagreed).
+    # This is a display-only proxy - it is NOT a model input (see
+    # fire_history.FEATURE_COLUMNS_V2); real NDVI is not ingested yet.
+    import hashlib
+    base = np.array([0.35 + 0.40 * ((int(hashlib.md5(str(z).encode()).hexdigest()[:8], 16) % 1000) / 1000.0)
+                     for z in zone_ids])
     base = np.where(rain_mm > 1.0, np.clip(base * 1.1, 0, 0.9), base)
     return np.clip(base, -1, 1)
 
@@ -162,15 +172,10 @@ class DataProcessor:
     ]
 
     # Matches FEATURE_COLUMNS in src/ml_models/train_real.py exactly (order
-    # matters for XGBoost). The real-data models (xgboost_real.json etc.)
-    # were trained without fire_frp/active_fire_nearby - those two columns
-    # only exist in the old demo/offline pipeline (Bug 3/4 era, see
-    # project_state.pdf Sec. 7) and must never be fed to the real models.
-    REAL_FEATURE_COLUMNS = [
-        "wx_temperature_c", "wx_humidity_pct", "wx_wind_speed_ms",
-        "wx_precipitation_mm", "ffmc", "dmc", "dc", "bui", "fwi", "ndvi",
-        "month", "day_of_year", "fwi_lag1",
-    ]
+    # matters for XGBoost) - both import it from fire_history.py. The real
+    # models never see fire_frp/active_fire_nearby (demo pipeline only); fire
+    # information reaches them only through the lagged fire-history features.
+    REAL_FEATURE_COLUMNS = FEATURE_COLUMNS_V2
 
     def __init__(self, month: Optional[int] = None):
         self.month = month or pd.Timestamp.now(tz="UTC").month
@@ -221,7 +226,8 @@ class DataProcessor:
         )
         return df
 
-    def get_feature_matrix(self, processed: pd.DataFrame, real: bool = False):
+    def get_feature_matrix(self, processed: pd.DataFrame, real: bool = False,
+                           columns: Optional[list] = None):
         """
         real=False (default): demo/offline 12-column matrix, for train.py
         and the synthetic-mode pipeline. Unchanged behaviour.
@@ -229,7 +235,7 @@ class DataProcessor:
         (xgboost_real.json / random_forest_real.pkl / cnn_lstm_real.keras).
         Use this whenever ml_model was loaded from a *_real.* file.
         """
-        cols = self.REAL_FEATURE_COLUMNS if real else self.FEATURE_COLUMNS
+        cols = columns or (self.REAL_FEATURE_COLUMNS if real else self.FEATURE_COLUMNS)
         X = processed[cols].copy()
         if "active_fire_nearby" in X.columns:
             X["active_fire_nearby"] = X["active_fire_nearby"].astype(int)
@@ -255,4 +261,4 @@ if __name__ == "__main__":
 
     out_path = Path(__file__).resolve().parents[2] / "data" / "processed" / "features_sample.csv"
     processed.to_csv(out_path, index=False)
-    print(f"Saved to {out_path}")
+    print(f"Saved to {out_path}")

@@ -26,7 +26,9 @@ class APIConfig:
     firms_map_key: str = os.getenv("FIRMS_MAP_KEY", "")
     firms_base_url: str = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
     firms_source: str = "VIIRS_SNPP_NRT"  # SRS 5.1: MODIS/VIIRS satellite feeds
-    firms_day_range: int = 1
+    # 10 = the FIRMS API maximum. The model's fire-history features need the
+    # previous 10 days of detections; the map only shows the last ~48h as active.
+    firms_day_range: int = 10
 
     # OpenWeatherMap - free tier ~1000 calls/day (SRS 5.4)
     owm_api_key: str = os.getenv("OWM_API_KEY", "")

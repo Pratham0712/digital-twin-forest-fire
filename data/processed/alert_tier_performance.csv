@@ -1,0 +1,4 @@
+tier,share_of_zone_days_flagged,share_of_fires_captured,hit_rate
+EXTREME,0.0131,0.1291,0.4285
+HIGH or above,0.0854,0.4827,0.2458
+MODERATE or above,0.2824,0.8328,0.1283

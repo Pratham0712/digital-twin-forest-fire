@@ -35,6 +35,9 @@ from scipy.spatial import cKDTree
 
 from config.config import REGION, DATA_RAW_DIR, DATA_PROCESSED_DIR
 from src.data_ingestion.ingestion_module import build_region_grid
+from src.ml_models.fire_history import (
+    FIRE_MATCH_RADIUS_FACTOR, cell_flags_for_detections, confident_detections,
+)
 from src.data_processing.feature_engineering import (
     compute_ffmc, compute_dmc, compute_dc, compute_bui, compute_fwi, synthetic_ndvi_independent,
 )
@@ -42,7 +45,7 @@ from src.data_processing.feature_engineering import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-FIRE_MATCH_RADIUS_DEG = REGION.grid_resolution_deg * 0.7  # tightened: 1.5x was too wide and created false-positive labels in adjacent cells; 0.7x keeps only cells where the hotspot centroid is genuinely inside the cell
+FIRE_MATCH_RADIUS_DEG = REGION.grid_resolution_deg * FIRE_MATCH_RADIUS_FACTOR  # tightened: 1.5x was too wide and created false-positive labels in adjacent cells; 0.7x keeps only cells where the hotspot centroid is genuinely inside the cell
 
 
 def load_real_fires() -> pd.DataFrame:
@@ -63,20 +66,24 @@ def load_real_weather() -> pd.DataFrame:
             f"{path} not found - run src/data_ingestion/historical_weather.py first."
         )
     df = pd.read_csv(path)
-    df["date"] = pd.to_datetime(df["date"]).dt.date
+    # format="mixed": the file may hold plain dates and "2026-01-01 00:00:00" timestamps side by side
+    df["date"] = pd.to_datetime(df["date"], format="mixed").dt.date
     return df
 
 
-def build_dataset() -> pd.DataFrame:
-    fires = load_real_fires()
-    weather = load_real_weather()
-    grid = build_region_grid()
-
+def build_dataset_for_region(region, fires: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
+    """
+    One row per (grid zone, weather date) for `region`: real weather-derived
+    FWI features + a real FIRMS label. Region-agnostic, so the same code
+    builds the Karnataka set and the multi-state India set
+    (scripts/build_india_regions_dataset.py).
+    """
+    grid = build_region_grid(region)
     grid_coords = grid[["latitude", "longitude"]].values
-    grid_tree_cache = None  # grid itself is fixed, only weather/fire points change per day
 
     weather_dates = sorted(weather["date"].unique())
-    logger.info("Building real dataset: %d grid zones x %d unique weather dates", len(grid), len(weather_dates))
+    logger.info("Building real dataset for %s: %d grid zones x %d unique weather dates",
+                region.name, len(grid), len(weather_dates))
 
     all_rows = []
     for i, day in enumerate(weather_dates):
@@ -90,10 +97,18 @@ def build_dataset() -> pd.DataFrame:
         _, idx = wx_tree.query(grid_coords, k=1)
         wx_matched = day_weather.iloc[idx].reset_index(drop=True)
 
-        temp = wx_matched["temp"].fillna(wx_matched["temp"].median()).values
-        rh = wx_matched["rhum"].fillna(wx_matched["rhum"].median()).values
-        wind = wx_matched["wspd"].fillna(0).values / 3.6  # meteostat wspd is km/h -> convert to m/s
-        rain = wx_matched["prcp"].fillna(0).values
+        # Plain float64 ndarrays: multi-state weather can arrive as pandas
+        # nullable Float64 (pd.NA), which numpy-style code (.clip, ufuncs)
+        # cannot handle.
+        def _f(col):
+            return pd.to_numeric(wx_matched[col], errors="coerce").to_numpy(
+                dtype="float64", na_value=np.nan)
+
+        temp, rh, wspd, rain = _f("temp"), _f("rhum"), _f("wspd"), _f("prcp")
+        temp = np.where(np.isnan(temp), np.nanmedian(temp) if np.isfinite(temp).any() else 25.0, temp)
+        rh = np.where(np.isnan(rh), np.nanmedian(rh) if np.isfinite(rh).any() else 50.0, rh)
+        wind = np.nan_to_num(wspd, nan=0.0) / 3.6  # meteostat wspd is km/h -> m/s
+        rain = np.nan_to_num(rain, nan=0.0)
 
         ffmc = compute_ffmc(temp, rh, wind, rain)
         dmc = compute_dmc(temp, rh, rain, month=day.month)
@@ -101,26 +116,14 @@ def build_dataset() -> pd.DataFrame:
         bui = compute_bui(dmc, dc)
         fwi = compute_fwi(ffmc, bui, wind)
 
-        # Real label: did a CONFIDENT fire actually occur in this zone on this date?
-        # Filter to high-confidence detections only (confidence >= 50 for VIIRS nominal/high;
-        # this removes low-confidence detections that are often cloud edges or agricultural burns
-        # misclassified as forest fires, which are a major source of false-positive labels).
-        day_fires = fires[fires["acq_date"] == day]
-        if "confidence" in day_fires.columns:
-            conf_raw = day_fires["confidence"].astype(str).str.strip().str.lower()
-            # VIIRS_SNPP_SP uses string confidence: 'l'=low, 'n'=nominal, 'h'=high
-            # Keep nominal and high; drop low-confidence detections only.
-            # If values are numeric (some MODIS sources), keep >= 30.
-            is_string_conf = conf_raw.isin(["l", "n", "h"])
-            if is_string_conf.any():
-                day_fires = day_fires[conf_raw.isin(["n", "h"])]
-            else:
-                day_fires = day_fires[pd.to_numeric(conf_raw, errors="coerce").fillna(0) >= 30]
-        label = np.zeros(len(grid), dtype=int)
-        if not day_fires.empty:
-            fire_tree = cKDTree(day_fires[["latitude", "longitude"]].values)
-            dist, _ = fire_tree.query(grid_coords, k=1)
-            label = (dist <= FIRE_MATCH_RADIUS_DEG).astype(int)
+        # Real label: did a confident VEGETATION fire occur in this zone on
+        # this date? VIIRS nominal/high only (low-confidence detections are
+        # often cloud edges), and FIRMS type 0 only - static industrial heat
+        # sources (type 2, e.g. the Ballari steel belt) are not forest fires.
+        day_fires = confident_detections(fires[fires["acq_date"] == day])
+        label = cell_flags_for_detections(
+            grid_coords, day_fires[["latitude", "longitude"]].values.astype(float),
+            region.grid_resolution_deg).astype(int)
 
         ndvi = synthetic_ndvi_independent(grid["zone_id"].values, rain)
 
@@ -143,13 +146,21 @@ def build_dataset() -> pd.DataFrame:
 
     combined = pd.concat(all_rows, ignore_index=True)
     logger.info(
-        "Real dataset built: %d rows (%d zones x %d days), positive rate %.2f%%",
-        len(combined), len(grid), len(weather_dates), 100 * combined["fire_risk_label"].mean(),
+        "Real dataset built for %s: %d rows (%d zones x %d days), positive rate %.2f%%",
+        region.name, len(combined), len(grid), len(weather_dates),
+        100 * combined["fire_risk_label"].mean(),
     )
     return combined
 
 
+def build_dataset() -> pd.DataFrame:
+    return build_dataset_for_region(REGION, load_real_fires(), load_real_weather())
+
+
 if __name__ == "__main__":
+    from config.config import MODELS_DIR
+    from src.ml_models.fire_history import StaticSourceMask
+    StaticSourceMask.from_archive(pd.read_csv(DATA_RAW_DIR / "historical_fires_karnataka.csv")).save(MODELS_DIR)
     dataset = build_dataset()
     out_path = DATA_PROCESSED_DIR / "real_training_data.csv"
     dataset.to_csv(out_path, index=False)

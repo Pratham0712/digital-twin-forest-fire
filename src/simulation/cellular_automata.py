@@ -126,7 +126,8 @@ class FireSpreadSimulator:
             wind_speed_ms: float, wind_from_deg: float,
             horizon_minutes: int = 120,
             elevation_grid: Optional[np.ndarray] = None,
-            fuel_buildup_grid: Optional[np.ndarray] = None) -> List[SimulationStep]:
+            fuel_buildup_grid: Optional[np.ndarray] = None,
+            wind_schedule: Optional[List[Tuple[float, float]]] = None) -> List[SimulationStep]:
         """
         ignition_mask: bool (rows, cols) - True where fire starts (from ML
             layer's high-risk zones, e.g. the 15-cell active-fire seed).
@@ -139,6 +140,11 @@ class FireSpreadSimulator:
         fuel_buildup_grid: float (rows, cols), optional - normalised BUI
             (Buildup Index) multiplier for deep-fuel availability. If None,
             defaults to 1.0 everywhere (no effect) - same behaviour as before.
+        wind_schedule: optional list of (speed_ms, wind_from_deg), one per
+            simulation step (step k uses entry k-1; the last entry repeats if
+            the run is longer). When given it replaces the constant
+            wind_speed_ms / wind_from_deg - used to drive the spread with a
+            forecast that changes over the 2-hour horizon.
         """
         state = np.where(ignition_mask, CellState.BURNING, CellState.UNBURNED).astype(int)
         if non_fuel_mask is not None:
@@ -157,7 +163,11 @@ class FireSpreadSimulator:
         )]
 
         for step in range(1, n_steps + 1):
-            state = self._advance(state, dryness_grid, fuel_load_grid, wind_speed_ms, wind_from_deg,
+            if wind_schedule:
+                step_speed, step_from = wind_schedule[min(step - 1, len(wind_schedule) - 1)]
+            else:
+                step_speed, step_from = wind_speed_ms, wind_from_deg
+            state = self._advance(state, dryness_grid, fuel_load_grid, step_speed, step_from,
                                    elevation_grid, fuel_buildup_grid)
             history.append(SimulationStep(
                 step=step, minutes_elapsed=step * self.minutes_per_step, state=state.copy(),
@@ -270,7 +280,7 @@ if __name__ == "__main__":
 
     n_rows = processed["row"].max() + 1
     n_cols = processed["col"].max() + 1
-    ignition, dryness, fuel, non_fuel = FireSpreadSimulator.grids_from_processed(processed, n_rows, n_cols)
+    ignition, dryness, fuel, non_fuel, buildup = FireSpreadSimulator.grids_from_processed(processed, n_rows, n_cols)
 
     print(f"Grid: {n_rows}x{n_cols}, ignition points: {ignition.sum()}, non-fuel cells: {non_fuel.sum()}")
 

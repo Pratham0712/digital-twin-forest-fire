@@ -1,0 +1,5 @@
+# Everything needed to retrain models, build datasets and run the tests.
+-r requirements.txt
+tensorflow>=2.15   # only for the LSTM baseline in src/ml_models/model_trainer.py
+meteostat>=2.1     # historical weather download (src/data_ingestion/historical_weather.py)
+pytest>=8.0

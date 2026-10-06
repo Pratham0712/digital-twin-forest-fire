@@ -1,0 +1,7 @@
+method,flagged_share,recall,precision,lift_vs_random,model_recall_same_share,model_precision_same_share,region,season
+Zone had a fire yesterday,0.0435,0.2203,0.2203,5.06,0.3213,0.3213,Karnataka Western Ghats,2025
+Zone had a fire in the last 7 days,0.1894,0.6301,0.1447,3.33,0.711,0.1633,Karnataka Western Ghats,2025
+Zone or its neighbours burned in the last 7 days,0.6256,0.9725,0.0676,1.55,0.9862,0.0686,Karnataka Western Ghats,2025
+Zone had a fire yesterday,0.043,0.1829,0.1938,4.25,0.2441,0.2586,Karnataka Western Ghats,2026
+Zone had a fire in the last 7 days,0.186,0.4795,0.1176,2.58,0.5963,0.1462,Karnataka Western Ghats,2026
+Zone or its neighbours burned in the last 7 days,0.6638,0.9368,0.0644,1.41,0.9631,0.0662,Karnataka Western Ghats,2026
