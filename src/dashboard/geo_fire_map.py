@@ -100,14 +100,15 @@ def setup_payload(focus: FocusArea, duration_minutes: float, wind_speed_ms: floa
                   hotspots: Optional[List[dict]] = None, hotspot_kind: str = "observed",
                   hotspot_summary: str = "", ignition_kind: str = "hypothetical",
                   observed_points: Optional[Sequence[Tuple[float, float]]] = None,
-                  ignition_label: str = "") -> dict:
+                  ignition_label: str = "", max_picks: Optional[int] = None,
+                  nonfuel_cells: Optional[List[int]] = None, picks_only_for_map_points: bool = False) -> dict:
     """ignition_kind: "hypothetical" (placement / map points, the default),
     "observed" (only `observed_points`: valid NASA FIRMS cells) or "none"."""
     domain = domain_for(focus, duration_minutes)
     f, d = _geometry(focus, domain)
     preview, picks = _ignition_preview(domain, ignition_kind, n_ignition, placement, wind_speed_ms, wind_from_deg,
-                                       ignition_points, observed_points)
-    p = {"mode": "setup", "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
+                                       ignition_points, observed_points, picks_only_for_map_points)
+    p = {"mode": "setup", **_pick_rules(max_picks, nonfuel_cells), "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
          "focus": f, "domain": d, "hasRun": False, "editable": True, "search": search,
          "limits": {"min": SYSTEM.focus_min_m, "max": SYSTEM.focus_max_m},
          "placement": placement, "preview": preview, "ignitionKind": ignition_kind, "ignitionLabel": ignition_label,
@@ -124,12 +125,14 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
                 n_ignition: int, placement: str, ignition_points: Sequence[Tuple[float, float]],
                 layers: dict, autoplay: bool, api_key: str, map_id: str, height: int = 660,
                 hotspot_summary: str = "", ignition_kind: str = "hypothetical",
-                observed_points: Optional[Sequence[Tuple[float, float]]] = None, ignition_label: str = "") -> dict:
+                observed_points: Optional[Sequence[Tuple[float, float]]] = None, ignition_label: str = "",
+                max_picks: Optional[int] = None, nonfuel_cells: Optional[List[int]] = None,
+                picks_only_for_map_points: bool = False) -> dict:
     domain = result.domain if result is not None else domain_for(focus, duration_minutes)
     f, d = _geometry(focus, domain)
     preview, picks = _ignition_preview(domain, ignition_kind, n_ignition, placement, wind_speed_ms, wind_from_deg,
-                                       ignition_points, observed_points)
-    p = {"mode": "sim", "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
+                                       ignition_points, observed_points, picks_only_for_map_points)
+    p = {"mode": "sim", **_pick_rules(max_picks, nonfuel_cells), "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
          "focus": f, "domain": d, "editable": False, "search": False,
          "durationMin": float(duration_minutes), "durationLabel": duration_label(duration_minutes),
          "hotspots": hotspots, "hotspotKind": hotspot_kind, "hotspotSummary": hotspot_summary,
@@ -161,11 +164,32 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
     return p
 
 
+def _pick_rules(max_picks: Optional[int], nonfuel_cells: Optional[List[int]]) -> dict:
+    """Map-click rules for a WHAT-IF hypothetical ignition (absent = original behaviour)."""
+    out = {}
+    if max_picks:
+        out["maxPicks"] = int(max_picks)
+    if nonfuel_cells:
+        out["nonfuelCells"] = [int(i) for i in nonfuel_cells]
+    return out
+
+
 def _ignition_preview(domain, kind: str, n_ignition: int, placement: str, wind_speed_ms: float,
-                      wind_from_deg: float, ignition_points, observed_points) -> Tuple[list, list]:
-    """(preview cell indices, editable map points) for the ignition markers."""
+                      wind_from_deg: float, ignition_points, observed_points,
+                      picks_only_for_map_points: bool = False) -> Tuple[list, list]:
+    """(preview cell indices, editable map points) for the ignition markers.
+    picks_only_for_map_points (WHAT-IF): map points are shown only with the Map
+    points placement, and Map points with no point shows no marker (nothing
+    ignites, no centre fallback)."""
     if kind == "none":
         return [], []
+    if picks_only_for_map_points and kind == "hypothetical":
+        if placement == "Map points":
+            pts = [list(q) for q in ignition_points or []]
+            mask = ignition_mask(domain, 0, "Map points", wind_speed_ms, wind_from_deg, pts, strict_points=True)
+            return np.flatnonzero(mask.ravel()).tolist(), pts
+        mask = ignition_mask(domain, n_ignition, placement, wind_speed_ms, wind_from_deg)
+        return np.flatnonzero(mask.ravel()).tolist(), []
     if kind == "observed":
         mask = ignition_mask(domain, 0, "Map points", wind_speed_ms, wind_from_deg, observed_points or [],
                              strict_points=True)

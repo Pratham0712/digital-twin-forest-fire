@@ -103,8 +103,47 @@ def _snap(v: float, cell: float) -> float:
     return float(np.clip(round(v / cell) * cell, SYSTEM.focus_min_m, SYSTEM.focus_max_m))
 
 
-def apply_map_event(ev: dict, setup: dict, twin) -> bool:
-    """Apply an event from the map component to the set-up. True if changed."""
+HYP_OUTSIDE = "Select an ignition point inside the simulation area."
+HYP_NON_FUEL = "Selected location is non-burnable. Choose a fuel cell."
+
+
+def validate_hypothetical_points(points, setup: dict, land=None, messages: Optional[list] = None) -> list:
+    """WHAT-IF hypothetical ignition points as clicked: kept exactly where they
+    are (never moved), only inside the simulation domain, only on fuel cells of
+    the existing fuel mask (fuel_map), and at most the requested ignition-cell
+    count. Rejections are reported in `messages`."""
+    from src.simulation.fuel_map import FUEL
+    dom = domain_for(focus_from_setup(setup), setup["duration_min"])
+    classes = getattr(land, "classes", None) if land is not None and getattr(land, "available", False) else None
+    if classes is not None and classes.shape != (dom.n_rows, dom.n_cols):
+        classes = None
+    n_max = int(setup.get("n_ignition") or 1)
+    out, msgs = [], messages if messages is not None else []
+    for lat, lon in points or []:
+        rc = dom.cell_of(float(lat), float(lon))
+        if rc is None:
+            msgs.append(HYP_OUTSIDE)
+        elif classes is not None and int(classes[rc]) != FUEL:
+            msgs.append(HYP_NON_FUEL)
+        elif len(out) >= n_max:
+            msgs.append(f"Maximum of {n_max} hypothetical ignition points reached.")
+        else:
+            out.append([float(lat), float(lon)])
+    return out
+
+
+def apply_map_event(ev: dict, setup: dict, twin, whatif: bool = False, land=None,
+                    messages: Optional[list] = None) -> bool:
+    """Apply an event from the map component to the set-up. True if changed.
+    whatif=True (LIVE DATA -> WHAT-IF, hypothetical ignition): clicked points are
+    validated (domain, fuel mask, count) and "Clear points" keeps the Map points
+    placement with 0 points selected instead of falling back to a placement rule."""
+    if whatif and ev.get("kind") == "ignite":
+        pts = validate_hypothetical_points(ev.get("points") or [], setup, land, messages)
+        setup["ignition_points"] = pts
+        setup["placement"] = "Map points"
+        setup["ignition_source"] = "hypothetical"
+        return True
     kind = ev.get("kind")
     if kind == "area":
         loc = dict(setup["location"])
@@ -218,6 +257,7 @@ def render_setup_controls(twin, setup: dict, kp: str, show_location: bool = True
             st.rerun()
 
     hyp_locked = False
+    prev_placement = setup.get("placement")
     if ignition_mode == "live":
         st.caption("Ignition: **observed NASA FIRMS detections only** (LIVE). Valid detections inside the area ignite "
                    "their grid cell; with none, no fire is simulated. Hypothetical placement is available in "
@@ -239,14 +279,36 @@ def render_setup_controls(twin, setup: dict, kp: str, show_location: bool = True
                              key=f"{kp}_place", disabled=hyp_locked,
                              help="Upwind edge: the head fire runs across the area. Map points: use 'Set ignition on "
                                   "map' and click the map.")
-    n_ign = i2.slider("Ignition cells", 1, 9, key=f"{kp}_nign", disabled=hyp_locked or placement == "Map points")
+    whatif_hyp = ignition_mode == "whatif" and not hyp_locked
+    n_ign = i2.slider("Ignition cells", 1, 9, key=f"{kp}_nign",
+                      disabled=hyp_locked or (placement == "Map points" and not whatif_hyp),
+                      help="Number of hypothetical ignition cells; with Map points, the number of points you can "
+                           "place on the map." if whatif_hyp else None)
     grid = i3.toggle("Grid", key=f"{kp}_grid")
     boundary = i4.toggle("Boundary", key=f"{kp}_bound")
 
     cell = float(cell)
     setup.update(width_m=_snap(float(w), cell), height_m=_snap(float(h), cell), cell_m=cell, duration_min=dur,
                  placement=placement, n_ignition=int(n_ign), layers={"grid": bool(grid), "boundary": bool(boundary)})
-    if placement == "Map points" and not setup["ignition_points"] and not hyp_locked:
+    if whatif_hyp:
+        # WHAT-IF hypothetical ignition: one state (setup) for map and controls.
+        if prev_placement != placement and "Map points" in (prev_placement, placement):
+            setup["ignition_points"] = []              # no stale points from the previous strategy
+        if placement == "Map points":
+            pts = setup["ignition_points"]
+            if len(pts) > int(n_ign):
+                setup["ignition_points"] = pts[:int(n_ign)]
+                st.caption(f"Ignition cells lowered to {int(n_ign)}: only the first {int(n_ign)} map point(s) are kept.")
+            n_sel = len(setup["ignition_points"])
+            st.markdown(f"<div class='lm-ctag'><span class='lm-tag whatif'>HYPOTHETICAL IGNITIONS</span> "
+                        f"{n_sel} / {int(n_ign)} SELECTED</div>", unsafe_allow_html=True)
+            if not n_sel:
+                st.caption("Click **Set ignition on map** on the map, then click inside the simulation area "
+                           f"(up to {int(n_ign)} point(s), fuel cells only). No point, no fire.")
+        else:
+            st.markdown(f"<div class='lm-ctag'><span class='lm-tag whatif'>HYPOTHETICAL IGNITIONS</span> "
+                        f"{int(n_ign)} cell(s) · {placement}</div>", unsafe_allow_html=True)
+    elif placement == "Map points" and not setup["ignition_points"] and not hyp_locked:
         st.caption("No map points yet: click **Set ignition on map** on the map, then click inside the area. "
                     "Until then the centre is used.")
     return validate_setup(setup["width_m"], setup["height_m"], cell, dur)
@@ -294,7 +356,7 @@ def live_offline() -> bool:
 
 def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from_deg: float, height: int = 540,
                      hotspots=None, hotspot_kind: str = "observed", hotspot_summary: str = "",
-                     ignition: Optional[dict] = None):
+                     ignition: Optional[dict] = None, land=None, whatif: bool = False):
     """Interactive set-up map: search, drag/resize box, click-to-ignite, real
     NASA FIRMS detections around the location."""
     key = google_maps_key()
@@ -308,23 +370,34 @@ def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from
                             setup["placement"], setup["ignition_points"], setup["layers"], key,
                             google_maps_map_id(), height=height, hotspots=hotspots or [],
                             hotspot_kind=hotspot_kind, hotspot_summary=hotspot_summary,
-                            **_map_ignition_args(ignition))
+                            **_map_ignition_args(ignition, setup, land))
     ev = new_event(render_fire_map(payload, key=f"{kp}_map"), f"{kp}_map")
-    if ev and apply_map_event(ev, setup, twin):
+    msgs: list = []
+    if ev and apply_map_event(ev, setup, twin, whatif=whatif, land=land, messages=msgs):
         st.session_state[f"_{kp}_sync"] = True
+        st.session_state[f"_{kp}_ign_msgs"] = sorted(set(msgs))
         st.rerun()
+    for m in st.session_state.pop(f"_{kp}_ign_msgs", []) or []:
+        st.warning(m)
 
 
-def _map_ignition_args(ign: Optional[dict]) -> dict:
+def _map_ignition_args(ign: Optional[dict], setup: Optional[dict] = None, land=None) -> dict:
     """Map marker style for an ignition spec (live_modes.ignition_spec); None =
-    the original hypothetical placement markers."""
+    the original hypothetical placement markers. A WHAT-IF hypothetical ignition
+    also sends the point limit (Ignition cells) and the non-fuel cells, so the
+    map rejects invalid clicks immediately (Python validates again)."""
     if not ign:
         return {}
     if ign["source"] == "OBSERVED_FIRMS":
         return {"ignition_kind": "observed", "observed_points": ign["points"],
                 "ignition_label": f"OBSERVED · {ign.get('n_cells', len(ign['points']))} NASA FIRMS cell(s)"}
-    if ign["source"] == "HYPOTHETICAL_USER":
-        return {"ignition_kind": "hypothetical", "ignition_label": f"HYPOTHETICAL · {ign.get('placement') or '-'}"}
+    if ign["source"] == "HYPOTHETICAL_USER" or ign.get("awaiting_points"):
+        nf = (np.flatnonzero(land.non_fuel.ravel()).tolist()
+              if land is not None and getattr(land, "available", False) else [])
+        lbl = (f"HYPOTHETICAL · {ign.get('n_selected', 0)} / {ign.get('n_requested')} selected" if ign.get("manual")
+               else f"HYPOTHETICAL · {ign.get('n_requested')} cell(s) · {ign.get('placement') or '-'}")
+        return {"ignition_kind": "hypothetical", "ignition_label": lbl, "max_picks": ign.get("n_requested"),
+                "nonfuel_cells": nf, "picks_only_for_map_points": True}
     return {"ignition_kind": "none", "ignition_label": "NONE (no ignition source)"}
 
 
@@ -494,7 +567,8 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
             dom = domain_for(f, setup["duration_min"])
             elev, terrain_src = domain_elevation(dom, allow_fetch=True)
             land = domain_land_cover(dom, allow_fetch=True)      # water / roads / buildings -> non-fuel
-            if plan is not None and plan["ign"]["source"] == "OBSERVED_FIRMS":
+            if plan is not None and (plan["ign"]["source"] == "OBSERVED_FIRMS" or plan["ign"].get("manual")):
+                # observed FIRMS cells, or exactly the user's hypothetical map points: no other cell ignites
                 result = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=0,
                                           placement="Map points", seed=seed, elevation=elev,
                                           terrain_source=terrain_src, wind_schedule_15min=wind_schedule_15min,
@@ -551,11 +625,18 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
                               hot_kind, setup["n_ignition"], setup["placement"],
                               setup["ignition_points"], setup["layers"], autoplay=result is not None,
                               api_key=key, map_id=google_maps_map_id(), hotspot_summary=hot_summary,
-                              **_map_ignition_args(plan["ign"] if plan is not None else None))
+                              **_map_ignition_args(plan["ign"] if plan is not None else None, setup,
+                                                   plan["land"] if plan is not None else None))
         ev = new_event(render_fire_map(payload, key=f"{kp}_simmap"), f"{kp}_simmap")
-        if ev and ev.get("kind") == "ignite" and apply_map_event(ev, setup, twin):
+        msgs: list = []
+        if ev and ev.get("kind") == "ignite" and apply_map_event(
+                ev, setup, twin, whatif=lmode == lm.WHATIF, land=plan["land"] if plan is not None else None,
+                messages=msgs):
             st.session_state[f"_{kp}_set_sync"] = True
+            st.session_state[f"_{kp}_ign_msgs"] = sorted(set(msgs))
             st.rerun()
+        for m in st.session_state.pop(f"_{kp}_ign_msgs", []) or []:
+            st.warning(m)
     else:
         missing_key_card()
 

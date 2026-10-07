@@ -628,8 +628,9 @@ $('cReset').onclick=()=>camSim(900);
 $('cTilt').onclick=()=>{const t=(map.getTilt()||0)>5?0:55;map.setTilt(t);checkTilt(t);};
 $('cFull').onclick=()=>{const w=$('wrap');if(document.fullscreenElement)document.exitFullscreen();else if(w.requestFullscreen)w.requestFullscreen();};
 document.addEventListener('fullscreenchange',()=>{const w=$('wrap');w.style.height=document.fullscreenElement?'100vh':(P?P.height:600)+'px';resize();});
+function maxPicks(){return (P&&P.maxPicks)||10;}
 $('bPick').onclick=()=>{picking=!picking;$('bPick').classList.toggle('pick',picking);$('bPick').textContent=picking?'Click the map… (done)':'Set ignition on map';
-  if(map)map.setOptions({draggableCursor:picking?'crosshair':null});if(picking)toast('Click inside the simulation domain to add ignition points (up to 10).');};
+  if(map)map.setOptions({draggableCursor:picking?'crosshair':null});if(picking)toast('Click inside the simulation area to add hypothetical ignition points (up to '+maxPicks()+').');};
 $('bClear').onclick=()=>{PICKS=[];emit({kind:'ignite',points:[]});updateAreaPanel();};
 
 let lastHudStep=-2;
@@ -666,7 +667,7 @@ function updateAreaPanel(){
   setTxt('agrid',f.n_cols+' × '+f.n_rows);setTxt('acell',f.cell_m+' m');
   setTxt('adom',Math.round(DC*CELL)+' × '+Math.round(DR*CELL)+' m');
   setTxt('ahot',P.hotspotSummary||(P.hotspots&&P.hotspots.length?P.hotspots.length+(P.hotspotKind==='observed'?' observed':' demo (synthetic)'):'-'));
-  setTxt('aign',P.ignitionLabel||(PICKS.length?PICKS.length+' map point'+(PICKS.length>1?'s':''):(P.placement||'-')));
+  setTxt('aign',(P.maxPicks&&(P.placement==='Map points'||PICKS.length))?'HYPOTHETICAL · '+PICKS.length+' / '+P.maxPicks+' selected':P.ignitionLabel||(PICKS.length?PICKS.length+' map point'+(PICKS.length>1?'s':''):(P.placement||'-')));
 }
 function liveArea(b){         // live readout while the rectangle is being dragged/resized (no rerun)
   const ne=b.getNorthEast(),sw=b.getSouthWest(),lat=(ne.lat()+sw.lat())/2,lon=(ne.lng()+sw.lng())/2;
@@ -1082,8 +1083,10 @@ function commitRect(){
 // map click -> ignition point (lat/lon), only inside the simulation domain
 function onMapClick(e){
   if(!picking||!P)return;const lat=e.latLng.lat(),lng=e.latLng.lng(),[x,y]=toXY(lat,lng);
-  if(Math.abs(x)>DX0||Math.abs(y)>DY0){toast('That point is outside the simulation domain.');return;}
-  if(PICKS.length>=10){toast('Up to 10 ignition points.');return;}
+  if(Math.abs(x)>DX0||Math.abs(y)>DY0){toast('Select an ignition point inside the simulation area.');return;}
+  const ci=Math.floor((DY0-y)/CELL)*DC+Math.floor((x+DX0)/CELL);          // the grid cell actually clicked
+  if(P.nonfuelCells&&P.nonfuelCells.indexOf(ci)>=0){toast('Selected location is non-burnable. Choose a fuel cell.');return;}
+  if(PICKS.length>=maxPicks()){toast(P.maxPicks?'Maximum of '+P.maxPicks+' hypothetical ignition points reached.':'Up to 10 ignition points.');return;}
   PICKS.push([+lat.toFixed(6),+lng.toFixed(6)]);updateAreaPanel();
   clearTimeout(onMapClick.t);onMapClick.t=setTimeout(()=>emit({kind:'ignite',points:PICKS}),500);
 }

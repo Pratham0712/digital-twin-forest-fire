@@ -53,8 +53,9 @@ INPUTS = (("temp_c", "temperature_c", "Temperature", "°C", -40.0, 60.0, 0.1, 1)
 SCENARIO_START = {"temp_c": 32.0, "humidity_pct": 40.0, "wind_speed_ms": 5.0, "wind_from_deg": 225.0}
 
 IGN_NONE, IGN_OBSERVED, IGN_HYPOTHETICAL = "none", "observed", "hypothetical"
+MAP_POINTS = "Map points"                    # local_spread.PLACEMENTS: user-clicked hypothetical cells
 IGN_OPTIONS = {IGN_NONE: "NONE — no ignition source", IGN_OBSERVED: "OBSERVED — NASA FIRMS detections",
-               IGN_HYPOTHETICAL: "HYPOTHETICAL — user ignition"}
+               IGN_HYPOTHETICAL: "HYPOTHETICAL — user-selected ignition points"}
 SOURCE_LABEL = {"OBSERVED_FIRMS": "SOURCE: NASA FIRMS OBSERVED", "HYPOTHETICAL_USER": "SOURCE: USER HYPOTHETICAL IGNITION",
                 "NONE": "SOURCE: NO IGNITION"}
 HIGH = ("HIGH", "EXTREME")
@@ -250,12 +251,29 @@ def ignition_spec(mode: str, setup: dict, cls: Optional[dict]) -> dict:
                 "n_valid": n_valid, "n_cells": (cls or {}).get("n_cells", 0), "placement": None,
                 "label": SOURCE_LABEL["OBSERVED_FIRMS"]}
     if src == IGN_HYPOTHETICAL:
-        pts = setup.get("ignition_points") or [] if setup.get("placement") == "Map points" else []
+        n_req = int(setup.get("n_ignition") or 1)
+        manual = setup.get("placement") == MAP_POINTS
+        pts = [list(map(float, q)) for q in (setup.get("ignition_points") or [])][:n_req] if manual else []
+        if manual and not pts:
+            # Map points chosen but none placed yet: nothing ignites (no fallback cell is invented).
+            return {"source": "NONE", "kind": None, "points": [], "n_valid": 0, "placement": MAP_POINTS,
+                    "awaiting_points": True, "n_requested": n_req, "n_selected": 0, "manual": True,
+                    "label": f"SOURCE: NO IGNITION (0 / {n_req} HYPOTHETICAL POINTS SELECTED)"}
         return {"source": "HYPOTHETICAL_USER", "kind": "HYPOTHETICAL", "points": pts, "n_valid": 0,
-                "placement": setup.get("placement"), "n_ignition": setup.get("n_ignition"),
+                "placement": setup.get("placement"), "n_ignition": n_req, "n_requested": n_req,
+                "n_selected": len(pts) if manual else n_req, "manual": manual,
                 "label": SOURCE_LABEL["HYPOTHETICAL_USER"]}
     return {"source": "NONE", "kind": None, "points": [], "n_valid": 0, "placement": None,
             "label": SOURCE_LABEL["NONE"]}
+
+
+def hypothetical_status(ign: dict) -> Optional[str]:
+    """'HYPOTHETICAL IGNITIONS · 2 / 3 SELECTED' (map points) or the placement summary."""
+    if ign.get("manual"):
+        return f"HYPOTHETICAL IGNITIONS · {ign.get('n_selected', 0)} / {ign.get('n_requested', 0)} SELECTED"
+    if ign.get("source") == "HYPOTHETICAL_USER":
+        return f"HYPOTHETICAL IGNITIONS · {ign.get('n_requested')} cell(s) · {ign.get('placement')}"
+    return None
 
 
 # ── status ────────────────────────────────────────────────────────────────── #
@@ -275,6 +293,12 @@ def _notes(cls: Optional[dict], firms_status: str) -> list:
     if firms_status == "cached":
         out.append("NASA FIRMS data is CACHED (the latest request failed).")
     return out
+
+
+def _awaiting_msg(ign: dict) -> str:
+    return (f"No hypothetical ignition points placed yet (0 / {ign.get('n_requested')} selected). Click "
+            "Set ignition on map, then click inside the simulation area. No fire spread will be simulated until an "
+            "ignition source is provided.")
 
 
 def assess(mode: str, firms_status: str, cls: Optional[dict], severity: str, ign: dict,
@@ -314,11 +338,13 @@ def assess(mode: str, firms_status: str, cls: Optional[dict], severity: str, ign
         elif high:
             st_ = ("whatif_high_no_ignition", "orange", "WHAT-IF — HIGH FIRE RISK, NO FIRE SIMULATED",
                    "WHAT-IF CONDITIONS INDICATE HIGH FIRE RISK, BUT NO IGNITION SOURCE WAS PROVIDED.")
+        elif ign.get("awaiting_points"):
+            st_ = ("whatif_no_ignition", "grey", "WHAT-IF — NO IGNITION SOURCE", _awaiting_msg(ign))
         else:
             st_ = ("whatif_no_ignition", "grey", "WHAT-IF — NO IGNITION SOURCE",
                    f"No ignition source selected. Weather conditions indicate {sev} risk, but no fire spread will "
                    "be simulated until an ignition source is provided.")
-        if ign["source"] == "NONE" and high:
+        if ign["source"] == "NONE" and high and not ign.get("awaiting_points"):
             notes.insert(0, f"No ignition source selected. Weather conditions indicate {sev} risk, but no fire "
                             "spread will be simulated until an ignition source is provided.")
     else:
@@ -367,6 +393,8 @@ def result_status(mode: str, firms_status: str, cls: Optional[dict], severity: s
         elif high:
             r = ("WHAT-IF — HIGH FIRE RISK, NO FIRE SIMULATED", "orange",
                  "WHAT-IF CONDITIONS INDICATE HIGH FIRE RISK, BUT NO IGNITION SOURCE WAS PROVIDED.")
+        elif ign.get("awaiting_points"):
+            r = ("WHAT-IF — NO IGNITION SOURCE", "grey", _awaiting_msg(ign))
         else:
             r = ("WHAT-IF — NO IGNITION SOURCE", "grey",
                  f"No ignition source selected. Weather conditions indicate {sev} risk, but no fire spread will be "
@@ -558,10 +586,11 @@ def plan_ignition(mode: str, setup: dict, focus, cond: dict, detections: Optiona
     zone_nf = bool(ca_inputs_from_conditions(cond)["non_fuel"])
     cls = classify_detections(dom, dets, None, zone_non_fuel=zone_nf)
     land = None
-    if cls["n_in_area"]:
-        land = domain_land_cover(dom, allow_fetch=allow_fetch)
+    if cls["n_in_area"] or ignition_source(mode, setup) == IGN_HYPOTHETICAL:
+        land = domain_land_cover(dom, allow_fetch=allow_fetch)   # also validates hypothetical clicks
         cls = classify_detections(dom, dets, land, zone_non_fuel=zone_nf)
     ign = ignition_spec(mode, setup, cls)
+    ign["cells"] = [list(rc) if rc else None for rc in (dom.cell_of(float(a), float(b)) for a, b in ign["points"])]
     return {"cls": cls, "ign": ign, "land": land if land is not None else all_fuel((dom.n_rows, dom.n_cols)),
             "domain": dom}
 

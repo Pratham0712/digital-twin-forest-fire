@@ -150,7 +150,8 @@ else:
         _v = ctl["values"]
         render_setup_map(setup, "wi_setup", twin, float(_v.get("wind_speed_ms") or 0.0),
                          float(_v.get("wind_from_deg") or 0.0), hotspots=_hot, hotspot_kind=_kind,
-                         hotspot_summary=_hsum, ignition=plan["ign"])
+                         hotspot_summary=_hsum, ignition=plan["ign"], land=plan["land"],
+                         whatif=mode == lm.WHATIF)
         cls = plan["cls"]
         render_live_conditions(_loc["lat"], _loc["lon"], _loc.get("name", ""), "wi", False, data=(w, ws, d, fs),
                                detections=markers, refresh_all=True,
