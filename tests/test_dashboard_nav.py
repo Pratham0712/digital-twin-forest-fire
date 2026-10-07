@@ -19,6 +19,7 @@ def app(tmp_path, monkeypatch):
     at = AppTest.from_file(str(DASH / "app.py"), default_timeout=240)
     at.session_state["auth_user"] = "admin"
     at.session_state["auth_role"] = "admin"
+    at.session_state["_pref_offline_mode"] = True       # explicit demo mode: no real API calls
     at.run()
     assert not at.exception
     return at
