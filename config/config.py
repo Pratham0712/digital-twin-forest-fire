@@ -10,7 +10,47 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+ENV_FILE = BASE_DIR / ".env"
+# Loaded here, before APIConfig below reads os.getenv(). Values already set in
+# the process environment win (override=False).
+load_dotenv(ENV_FILE)
+
+API_KEY_NAMES = ("FIRMS_MAP_KEY", "OWM_API_KEY", "GOOGLE_MAPS_API_KEY")
+
+
+def env_file_problems(path: Path = ENV_FILE) -> list:
+    """Safe diagnostics for .env lines python-dotenv cannot use: a variable
+    name with spaces / wrong separators ("FIRMS MAP_KEY", "OWM API KEY") is
+    skipped by the parser, so the key silently stays unset. Returns messages
+    with line numbers and NAMES only - never a value."""
+    import re
+    out = []
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return out
+    wanted = {re.sub(r"[^A-Z0-9]", "", k): k for k in API_KEY_NAMES + ("GOOGLE_MAPS_MAP_ID",)}
+    for n, line in enumerate(lines, 1):
+        t = line.strip()
+        if not t or t.startswith("#") or "=" not in t:
+            continue
+        name = t.split("=", 1)[0].strip()
+        if name.startswith("export "):
+            name = name[7:].strip()
+        expected = wanted.get(re.sub(r"[^A-Z0-9]", "", name.upper()))
+        if expected and name != expected:
+            out.append(f".env line {n}: variable name '{name}' is not valid, so it is ignored; rename it to {expected}")
+    return out
+
+
+def key_configured() -> dict:
+    """{name: True/False} - whether each API key is visible to this process."""
+    return {k: bool(os.getenv(k, "").strip()) for k in API_KEY_NAMES}
+
+
+for _msg in env_file_problems():
+    import logging as _logging
+    _logging.getLogger(__name__).warning(_msg)
 
 DATA_RAW_DIR = BASE_DIR / "data" / "raw"
 DATA_PROCESSED_DIR = BASE_DIR / "data" / "processed"

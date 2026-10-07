@@ -48,9 +48,13 @@ def latest_spread() -> Optional[Tuple[str, object]]:
 
 
 def regional_wind(twin) -> Optional[Tuple[float, float]]:
+    """Mean wind of the twin's weather grid, or None when it has no weather."""
     try:
+        import numpy as np
         from src.data_ingestion.wind import mean_wind
         g = twin.current_snapshot.processed_grid
+        if not np.isfinite(g["wx_wind_speed_ms"].to_numpy(float)).any():
+            return None
         return mean_wind(g["wx_wind_speed_ms"].values, g["wx_wind_deg"].values)
     except Exception:
         return None
@@ -60,39 +64,60 @@ MODE_LABEL = {"live": "LIVE", "cached": "CACHED", "error": "UNAVAILABLE", "demo"
               "not_configured": "NOT CONFIGURED", "pending": "PENDING", "none": "DEMO"}
 
 
-def feed_status(twin) -> dict:
-    """What each feed ACTUALLY delivered on the twin's last refresh (from the
-    ingestion layer's source_status), not what the sidebar asked for. LIVE only
-    when the real request succeeded; synthetic data is never called LIVE."""
+def feed_status(twin, demo: Optional[bool] = None) -> dict:
+    """What each feed ACTUALLY delivered on the twin's last refresh (the
+    ingestion layer's source_status), interpreted against the ONE authoritative
+    demo / offline switch (app_state.is_demo_mode). Rules:
+      * demo mode ON  -> DEMO (synthetic data, labelled as such);
+      * demo mode OFF -> never DEMO: each feed is LIVE / CACHED / UNAVAILABLE /
+        NOT CONFIGURED (or PENDING while the twin for the new mode loads);
+      * synthetic data is never LIVE."""
+    if demo is None:
+        from src.dashboard.app_state import is_demo_mode
+        demo = is_demo_mode()
     ss = getattr(getattr(twin, "ingestion", None), "source_status", None) or {}
-    if twin is None:
-        f = w = "none"
+    if demo:
+        f = w = "demo"
+    elif twin is None or bool(getattr(twin, "offline", False)):
+        f = w = "pending"                    # real-data twin not loaded yet (or still the demo one)
     else:
-        f = (ss.get("firms") or {}).get("mode") or ("demo" if getattr(twin, "offline", True) else "pending")
-        w = (ss.get("weather") or {}).get("mode") or ("demo" if getattr(twin, "offline", True) else "pending")
+        f = (ss.get("firms") or {}).get("mode") or "pending"
+        w = (ss.get("weather") or {}).get("mode") or "pending"
+        f, w = ("pending" if m == "demo" else m for m in (f, w))
     modes = {f, w}
-    if modes == {"live"}:
+    if demo:
+        overall = "demo"
+    elif modes == {"live"}:
         overall = "live"
     elif "error" in modes:
         overall = "error"
+    elif "not_configured" in modes:
+        overall = "not_configured"
     elif "cached" in modes:
         overall = "cached"
-    elif "live" in modes:
-        overall = "partial"
+    elif "pending" in modes:
+        overall = "pending"
     else:
-        overall = "demo"
-    return {"live": overall == "live", "overall": overall,
+        overall = "partial"
+    from config.config import env_file_problems, key_configured
+    return {"live": overall == "live", "overall": overall, "demo": bool(demo),
             "firms": MODE_LABEL.get(f, f.upper()), "weather": MODE_LABEL.get(w, w.upper()),
             "firms_mode": f, "weather_mode": w,
-            "firms_status": ss.get("firms") or {}, "weather_status": ss.get("weather") or {},
+            "firms_status": (ss.get("firms") or {}) if not demo else {},
+            "weather_status": (ss.get("weather") or {}) if not demo else {},
+            "keys": key_configured(), "env_problems": env_file_problems(),
             "maps": bool(os.getenv("GOOGLE_MAPS_API_KEY"))}
 
 
 def data_badge(feeds: dict) -> Tuple[str, str]:
-    """(css class, text) for header / ticker badges."""
-    return {"live": ("live", "LIVE · REAL DATA"), "cached": ("demo", "CACHED DATA"),
-            "error": ("demo", "API UNAVAILABLE"), "partial": ("demo", "PARTLY LIVE")}.get(
-        feeds["overall"], ("demo", "DEMO / OFFLINE MODE"))
+    """(css class, text) for header / ticker badges. DEMO / OFFLINE MODE only
+    when the user switched demo mode on."""
+    if feeds.get("demo"):
+        return "demo", "DEMO / OFFLINE MODE"
+    return {"live": ("live", "LIVE · REAL DATA"), "cached": ("demo", "REAL DATA · CACHED"),
+            "error": ("demo", "REAL DATA · API UNAVAILABLE"), "partial": ("demo", "REAL DATA · PARTLY LIVE"),
+            "not_configured": ("demo", "REAL DATA · KEY MISSING"),
+            "pending": ("demo", "REAL DATA · CONNECTING")}.get(feeds["overall"], ("demo", "REAL DATA"))
 
 
 def _utc(iso: Optional[str]) -> str:
@@ -113,8 +138,10 @@ def feed_text(kind: str, feeds: dict) -> str:
         if mode == "error":
             return "UNAVAILABLE · no detections shown"
         if mode == "not_configured":
-            return "NOT CONFIGURED · synthetic detections (not observed)"
-        return "DEMO · synthetic detections"
+            return "NOT CONFIGURED · FIRMS_MAP_KEY not found in .env · no detections shown"
+        if mode == "pending":
+            return "CONNECTING · fetching real detections"
+        return "DEMO · synthetic detections (not observed)"
     if mode == "live":
         return f"LIVE · fetched {_utc(st_.get('fetched_utc'))}"
     if mode == "cached":
@@ -122,7 +149,9 @@ def feed_text(kind: str, feeds: dict) -> str:
     if mode == "error":
         return "UNAVAILABLE · risk computed without current weather"
     if mode == "not_configured":
-        return "NOT CONFIGURED · synthetic weather"
+        return "NOT CONFIGURED · OWM_API_KEY not found in .env · no weather shown"
+    if mode == "pending":
+        return "CONNECTING · fetching real weather"
     return "DEMO · synthetic weather"
 
 
@@ -140,7 +169,8 @@ def ticker_items(twin=None) -> Tuple[dict, List[Tuple[str, str, str]]]:
     items: List[Tuple[str, str, str]] = []
     summary = twin.get_summary() if twin is not None and twin.current_snapshot is not None else None
     if summary is None:
-        items.append(("warn", "DATA", "DEMO / OFFLINE MODE · no risk state loaded yet"))
+        items.append(("warn", "DATA", ("DEMO / OFFLINE MODE" if feeds["demo"] else "REAL DATA")
+                      + " · no risk state loaded yet"))
     else:
         level, cls = risk_level(summary)
         bd = summary.get("severity_breakdown", {}) or {}
@@ -150,10 +180,12 @@ def ticker_items(twin=None) -> Tuple[dict, List[Tuple[str, str, str]]]:
         items.append(("crit" if bd.get("EXTREME") else ("warn" if summary.get("total_alerts") else "ok"),
                       "ALERT ZONES", f"{summary.get('total_alerts', 0)} "
                                      f"({bd.get('EXTREME', 0)} extreme, {bd.get('HIGH', 0)} high)"))
-        w = regional_wind(twin)
+        w = regional_wind(twin) if feeds["weather_mode"] in ("live", "cached", "demo") else None
         if w is not None:
             items.append(("data", "WIND", f"{w[0]:.1f} m/s from {compass(w[1])} ({w[1]:.0f}°) · regional mean"
                                           + {"live": "", "cached": " · cached"}.get(feeds["weather_mode"], " · demo")))
+        else:
+            items.append(("warn", "WIND", "no real weather available (none invented)"))
         ts = (summary.get("timestamp") or "")[:16].replace("T", " ")
         if ts:
             items.append(("data", "LAST REFRESH", f"{ts} UTC"))
@@ -168,7 +200,9 @@ def ticker_items(twin=None) -> Tuple[dict, List[Tuple[str, str, str]]]:
         items.append(("warn", "SPREAD SIMULATION", "scenario applied · ready to run"))
     else:
         items.append(("ok", "SPREAD SIMULATION", "idle · no run this session"))
-    dot = {"live": "ok", "error": "crit"}
+    dot = {"live": "ok", "error": "crit", "not_configured": "crit"}
+    for msg in feeds["env_problems"]:
+        items.append(("crit", ".ENV", msg))
     items.append((dot.get(feeds["firms_mode"], "warn"), "NASA FIRMS", feed_text("firms", feeds)))
     items.append((dot.get(feeds["weather_mode"], "warn"), "OPENWEATHERMAP", feed_text("weather", feeds)))
     items.append(maps_item(feeds))

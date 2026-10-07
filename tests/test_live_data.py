@@ -66,7 +66,7 @@ def test_keys_come_from_the_environment(monkeypatch):
     src = (ROOT / "config" / "config.py").read_text()
     for k in ("FIRMS_MAP_KEY", "OWM_API_KEY", "GOOGLE_MAPS_API_KEY"):
         assert f'os.getenv("{k}"' in src                                   # read from env / .env, never hard-coded
-    assert 'load_dotenv(BASE_DIR / ".env")' in src
+    assert "load_dotenv(ENV_FILE)" in src and 'ENV_FILE = BASE_DIR / ".env"' in src
     from src.dashboard.geo_spread import google_maps_key
     monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "gkey")
     assert google_maps_key() == "gkey"
@@ -212,12 +212,14 @@ def test_offline_and_unconfigured_are_never_live(monkeypatch):
     m.fetch_weather()
     assert m.source_status["firms"]["mode"] == "demo" and m.source_status["weather"]["mode"] == "demo"
     monkeypatch.setattr(API, "firms_map_key", "")
+    monkeypatch.setattr(API, "owm_api_key", "")
     m2 = im.DataIngestionModule(offline=False, region=REGION)
-    m2.fetch_fire_hotspots()
+    assert m2.fetch_fire_hotspots().empty and m2.fetch_weather().empty          # no synthetic data in real mode
     assert m2.source_status["firms"]["mode"] == "not_configured"
+    assert m2.source_status["weather"]["mode"] == "not_configured"
 
 
-# ── labels: LIVE only for real successful data ───────────────────────────── #
+# ── labels: LIVE only for real successful data; DEMO only when demo mode is ON ── #
 
 class _Twin:
     def __init__(self, firms, weather, offline=False):
@@ -226,17 +228,78 @@ class _Twin:
                                                           "weather": {"mode": weather}}})()
 
 
-@pytest.mark.parametrize("f,w,overall,badge", [("live", "live", "live", "LIVE · REAL DATA"),
-                                               ("live", "error", "error", "API UNAVAILABLE"),
-                                               ("cached", "live", "cached", "CACHED DATA"),
-                                               ("demo", "demo", "demo", "DEMO / OFFLINE MODE"),
-                                               ("not_configured", "live", "partial", "PARTLY LIVE")])
-def test_feed_status_labels(f, w, overall, badge):
+@pytest.mark.parametrize("f,w,overall,badge", [
+    ("live", "live", "live", "LIVE · REAL DATA"),
+    ("live", "error", "error", "REAL DATA · API UNAVAILABLE"),
+    ("error", "error", "error", "REAL DATA · API UNAVAILABLE"),
+    ("cached", "live", "cached", "REAL DATA · CACHED"),
+    ("not_configured", "live", "not_configured", "REAL DATA · KEY MISSING"),
+    ("not_configured", "not_configured", "not_configured", "REAL DATA · KEY MISSING")])
+def test_real_mode_is_never_labelled_demo(f, w, overall, badge):
     from src.dashboard.ui.global_ticker import data_badge, feed_status, feed_text
-    fs = feed_status(_Twin(f, w))
+    fs = feed_status(_Twin(f, w), demo=False)
     assert fs["overall"] == overall and data_badge(fs)[1] == badge
+    assert "DEMO" not in data_badge(fs)[1] and not fs["demo"]
     if f != "live":
         assert not feed_text("firms", fs).startswith("LIVE")
+
+
+def test_demo_mode_is_labelled_demo():
+    from src.dashboard.ui.global_ticker import data_badge, feed_status, feed_text
+    fs = feed_status(_Twin("demo", "demo", offline=True), demo=True)
+    assert fs["overall"] == "demo" and data_badge(fs)[1] == "DEMO / OFFLINE MODE"
+    assert feed_text("firms", fs).startswith("DEMO")
+    # a demo twin while the switch is already OFF is "connecting", never LIVE or DEMO
+    fs2 = feed_status(_Twin("demo", "demo", offline=True), demo=False)
+    assert fs2["overall"] == "pending" and "DEMO" not in data_badge(fs2)[1]
+
+
+def test_default_mode_follows_configured_keys(monkeypatch):
+    from src.dashboard.app_state import default_demo_mode
+    assert default_demo_mode() is False                                   # keys set -> real data by default
+    monkeypatch.setattr(API, "firms_map_key", "")
+    monkeypatch.setattr(API, "owm_api_key", "")
+    assert default_demo_mode() is True
+
+
+def test_single_authoritative_demo_state():
+    """Only app_state.py owns the demo / offline default; nobody else derives
+    one from the environment or keeps a second flag."""
+    offenders = []
+    for path in (ROOT / "src").rglob("*.py"):
+        if path.name == "app_state.py":
+            continue
+        txt = path.read_text(encoding="utf-8")
+        if re.search(r'_pref\(\s*"offline_mode"|_pref_offline_mode|DEMO_MODE\s*=\s*True|setdefault\(\s*"demo_mode"', txt):
+            offenders.append(path.name)
+        if re.search(r'not bool\(os\.getenv\("FIRMS_MAP_KEY"\)\)', txt):
+            offenders.append(path.name + " (env-derived default)")
+    assert offenders == []
+
+
+def test_env_file_diagnostics_name_problems_without_values(tmp_path):
+    from config.config import env_file_problems
+    secret = "abcdef0123456789abcdef0123456789"
+    env = tmp_path / ".env"
+    env.write_bytes(f"FIRMS MAP_KEY={secret}\r\nOWM API KEY={secret}\r\nGOOGLE_MAPS_API_KEY=AIzaX\n".encode())
+    probs = env_file_problems(env)
+    assert len(probs) == 2 and "FIRMS_MAP_KEY" in probs[0] and "line 2" in probs[1] and "OWM_API_KEY" in probs[1]
+    assert all(secret not in p for p in probs)
+    from dotenv import dotenv_values
+    assert "FIRMS_MAP_KEY" not in dotenv_values(env)                    # why the key was invisible
+
+
+def test_keys_never_logged(caplog):
+    c = FIRMSClient(FAKE_FIRMS, API.firms_base_url)
+
+    def boom(url, timeout):
+        raise requests.ConnectionError(f"cannot reach {url}")
+    c.session.get = boom
+    c.fetch_hotspots(11.5, 76.4, 11.9, 76.8, 1)
+    w = WeatherClient(FAKE_OWM, API.owm_base_url)
+    w.session.get = lambda url, params, timeout: Resp(500)
+    w.fetch_point(11.6, 76.6)
+    assert FAKE_FIRMS not in caplog.text and FAKE_OWM not in caplog.text and "***" in caplog.text
 
 
 def test_map_hotspots_never_synthetic_outside_demo():
@@ -264,6 +327,8 @@ def test_region_payload(monkeypatch):
     from src.dashboard.dashboard_common import get_twin
     from src.dashboard.geo_fire_map import region_payload
     from src.dashboard.ui.command_center import region_hotspots
+    monkeypatch.setattr(API, "firms_map_key", "")                      # no keys -> demo mode by default
+    monkeypatch.setattr(API, "owm_api_key", "")
     t = get_twin(offline=True, region=REGION)
     t.refresh()
     marks, kind, summ = region_hotspots(t)
@@ -272,8 +337,11 @@ def test_region_payload(monkeypatch):
     n = len(t.current_snapshot.processed_grid)
     assert p["mode"] == "region" and len(p["zones"]["risk"]) == n and len(p["zones"]["sev"]) == n
     assert p["mapId"] == "DEMO_MAP_ID" and p["hotspotKind"] == "synthetic"
+    # real-data mode (keys set, real twin) with a failed FIRMS request: nothing shown, not synthetic
+    monkeypatch.setattr(API, "firms_map_key", FAKE_FIRMS)
+    t.offline = False
     t.ingestion.source_status["firms"] = {"mode": "error"}
-    assert region_hotspots(t)[0] == []                                  # API failed: nothing shown
+    assert region_hotspots(t)[0] == [] and region_hotspots(t)[1] == "observed"
 
 
 @pytest.fixture
@@ -286,7 +354,7 @@ def app(tmp_path, monkeypatch):
     at = AppTest.from_file(str(ROOT / "src" / "dashboard" / "app.py"), default_timeout=240)
     at.session_state["auth_user"] = "admin"
     at.session_state["auth_role"] = "admin"
-    at.session_state["offline_mode"] = True
+    at.session_state["_pref_offline_mode"] = True
     at.run()
     assert not at.exception
     return at
@@ -302,3 +370,84 @@ def test_command_center_uses_google_map_and_what_if_has_no_extra_map(app):
     md = "\n".join(m.value for m in app.markdown)
     assert "Regional risk map" not in md
     assert "Real-world observations at the selected location" in md and "SCENARIO INPUT" in md
+
+
+def _app_with(monkeypatch, tmp_path, demo, firms_ok=True):
+    """Command Center with fake FIRMS / OWM HTTP (no network) and the sidebar
+    switch in the given position."""
+    pytest.importorskip("streamlit.testing.v1")
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 't.db'}")
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "TESTKEY")
+    calls = {"firms": 0, "owm": 0}
+    from src.dashboard import dashboard_common as dc
+    dc._SHARED_TWINS.clear()                                             # no twin reuse across tests
+
+    def fake_firms(self, min_lat, min_lon, max_lat, max_lon, day_range=1):
+        calls["firms"] += 1
+        if not firms_ok:
+            self._errors = ["FIRMS request failed: simulated outage"]
+            return self._finish(None)
+        self._errors = []
+        df = pd.read_csv(pd.io.common.StringIO(CSV))
+        df["acq_date"] = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d")
+        return self._finish(df)
+
+    def fake_point(self, lat, lon):
+        calls["owm"] += 1
+        return {"latitude": lat, "longitude": lon, "temperature_c": 29.0, "humidity_pct": 60, "pressure_hpa": 1008,
+                "wind_speed_ms": 3.0, "wind_deg": 240, "precipitation_mm": 0, "clouds_pct": 20,
+                "weather_main": "Clouds", "fetched_at": "2026-10-07T08:00:00+00:00"}
+    monkeypatch.setattr(FIRMSClient, "fetch_hotspots", fake_firms)
+    monkeypatch.setattr(WeatherClient, "fetch_point", fake_point)
+    at = AppTest.from_file(str(ROOT / "src" / "dashboard" / "app.py"), default_timeout=240)
+    at.session_state["auth_user"] = "admin"
+    at.session_state["auth_role"] = "admin"
+    at.session_state["_pref_offline_mode"] = demo
+    at.run()
+    assert not at.exception
+    return at, calls
+
+
+def _ticker(at) -> str:
+    return next(m.value for m in at.markdown if 'class="gt"' in m.value)
+
+
+def test_sidebar_off_means_real_data(monkeypatch, tmp_path):
+    at, calls = _app_with(monkeypatch, tmp_path, demo=False)
+    assert [t.value for t in at.sidebar.toggle if t.label == "Offline / demo mode"] == [False]
+    t = _ticker(at)
+    assert "DEMO / OFFLINE MODE" not in t and "LIVE · REAL DATA" in t
+    assert "NASA FIRMS" in t and "OPENWEATHERMAP" in t and "NOT CONFIGURED" not in t
+    assert calls["firms"] >= 1 and calls["owm"] >= 1                      # real requests were attempted
+    md = "\n".join(m.value for m in at.markdown)
+    assert "Real data (sidebar toggle OFF)" in md
+
+
+def test_sidebar_off_with_failing_firms_is_unavailable_not_demo(monkeypatch, tmp_path):
+    at, _ = _app_with(monkeypatch, tmp_path, demo=False, firms_ok=False)
+    t = _ticker(at)
+    assert "DEMO / OFFLINE MODE" not in t and "REAL DATA · API UNAVAILABLE" in t and "UNAVAILABLE" in t
+
+
+def test_sidebar_off_with_missing_key_is_not_configured_not_demo(monkeypatch, tmp_path):
+    monkeypatch.setattr(API, "firms_map_key", "")
+    at, _ = _app_with(monkeypatch, tmp_path, demo=False)
+    t = _ticker(at)
+    assert "DEMO / OFFLINE MODE" not in t and "KEY MISSING" in t and "NOT CONFIGURED" in t
+
+
+def test_sidebar_on_means_demo(monkeypatch, tmp_path):
+    at, calls = _app_with(monkeypatch, tmp_path, demo=True)
+    assert [t.value for t in at.sidebar.toggle if t.label == "Offline / demo mode"] == [True]
+    t = _ticker(at)
+    assert "DEMO / OFFLINE MODE" in t and "LIVE" not in t.split("DEMO / OFFLINE MODE")[1][:40]
+    assert calls["firms"] == 0 and calls["owm"] == 0                      # demo mode does not call the APIs
+    # flipping the switch OFF changes every reader at once
+    at.sidebar.toggle[0].set_value(False).run()
+    assert "DEMO / OFFLINE MODE" not in _ticker(at) and at.session_state["_pref_offline_mode"] is False
+    # ... and back ON, then OFF again: every flip sticks (no lost clicks)
+    for want in (True, False, True):
+        at.sidebar.toggle[0].set_value(want).run()
+        assert at.session_state["_pref_offline_mode"] is want and at.sidebar.toggle[0].value is want
+        assert ("DEMO / OFFLINE MODE" in _ticker(at)) is want

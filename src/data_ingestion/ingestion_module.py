@@ -132,7 +132,12 @@ class DataIngestionModule:
         return (feed, round(r.min_lat, 3), round(r.max_lat, 3), round(r.min_lon, 3), round(r.max_lon, 3)) + tuple(extra)
 
     def fetch_fire_hotspots(self) -> pd.DataFrame:
-        if self.offline or not API.firms_map_key:
+        if not self.offline and not API.firms_map_key:
+            # Real-data mode without a key: report it, never substitute synthetic detections.
+            self.source_status["firms"] = _feed_status(
+                "not_configured", "FIRMS_MAP_KEY is not set: no detections (none invented)", n=0)
+            return self.firms._empty_frame()
+        if self.offline:
             df = FIRMSClient.generate_sample(
                 {"min_lat": self.region.min_lat, "max_lat": self.region.max_lat,
                  "min_lon": self.region.min_lon, "max_lon": self.region.max_lon},
@@ -140,11 +145,8 @@ class DataIngestionModule:
                 seed=self.scenario.get("seed", 42),
                 prior=self._fire_prior(),
             )
-            self.source_status["firms"] = (
-                _feed_status("demo", "Demo / offline mode: synthetic detections (not observed)", n=len(df))
-                if self.offline else
-                _feed_status("not_configured", "FIRMS_MAP_KEY not set: synthetic detections (not observed)",
-                             n=len(df)))
+            self.source_status["firms"] = _feed_status(
+                "demo", "Demo / offline mode: synthetic detections (not observed)", n=len(df))
             return df
         df = self.firms.fetch_hotspots(
             self.region.min_lat, self.region.min_lon, self.region.max_lat, self.region.max_lon,
@@ -176,7 +178,11 @@ class DataIngestionModule:
 
     def fetch_weather(self) -> pd.DataFrame:
         grid_points = self.weather_grid[["latitude", "longitude"]].to_dict("records")
-        if self.offline or not API.owm_api_key:
+        if not self.offline and not API.owm_api_key:
+            self.source_status["weather"] = _feed_status(
+                "not_configured", "OWM_API_KEY is not set: risk computed without current weather (none invented)", n=0)
+            return self.weather._empty_frame()
+        if self.offline:
             df = WeatherClient.generate_sample(
                 grid_points,
                 temp_c=self.scenario.get("temp_c"),
@@ -184,10 +190,7 @@ class DataIngestionModule:
                 humidity_pct=self.scenario.get("humidity_pct"),
                 wind_from_deg=self.scenario.get("wind_from_deg"),
             )
-            self.source_status["weather"] = (
-                _feed_status("demo", "Demo / offline mode: synthetic weather", n=len(df))
-                if self.offline else
-                _feed_status("not_configured", "OWM_API_KEY not set: synthetic weather", n=len(df)))
+            self.source_status["weather"] = _feed_status("demo", "Demo / offline mode: synthetic weather", n=len(df))
             return df
         df = self.weather.fetch_grid(grid_points)
         st = dict(self.weather.last_status)

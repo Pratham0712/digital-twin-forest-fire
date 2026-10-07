@@ -306,15 +306,22 @@ def build_sidebar(show_scenario: bool = False, show_offline: bool = True):
     """Shared sidebar: offline toggle + region picker + refresh. Present on
     every page, and both choices persist across pages (see _remember)."""
     st.sidebar.markdown("### Controls")
-    offline_default = _pref("offline_mode", not bool(os.getenv("FIRMS_MAP_KEY")))
+    from src.dashboard.app_state import DEMO_TOGGLE_KEY, is_demo_mode, set_demo_mode
+    offline_default = is_demo_mode()          # the one authoritative demo / offline state
     if show_offline:
+        # A stable widget key: with value=<state> instead, the widget's identity
+        # changed with every flip and every other click was lost. The widget
+        # state is (re)initialised from the authoritative value whenever
+        # Streamlit has dropped it (pages that do not draw the toggle).
+        if DEMO_TOGGLE_KEY not in st.session_state:
+            st.session_state[DEMO_TOGGLE_KEY] = offline_default
         offline = st.sidebar.toggle(
-            "Offline / demo mode", value=offline_default,
-            help="Uses synthetic data. Turn off to use live satellite and weather feeds "
-                 "(needs API keys in .env or Streamlit Secrets).")
+            "Offline / demo mode", key=DEMO_TOGGLE_KEY,
+            help="ON: synthetic demo data. OFF: real NASA FIRMS and OpenWeatherMap data "
+                 "(keys from .env or Streamlit Secrets); a failing API is reported, never replaced by demo data.")
     else:
         offline = bool(offline_default)
-    _remember("offline_mode", offline)
+    set_demo_mode(offline)
 
     scenario = st.session_state.get("scenario") if not show_scenario else None
     if show_scenario and offline:

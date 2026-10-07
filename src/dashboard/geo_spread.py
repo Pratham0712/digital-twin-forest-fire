@@ -259,8 +259,8 @@ def _location_notes(setup: dict, twin):
 
 def live_offline() -> bool:
     """The sidebar's demo / offline choice (live by default when keys are set)."""
-    from src.dashboard.dashboard_common import _pref
-    return bool(_pref("offline_mode", not bool(os.getenv("FIRMS_MAP_KEY"))))
+    from src.dashboard.app_state import is_demo_mode
+    return is_demo_mode()
 
 
 def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from_deg: float, height: int = 540,
