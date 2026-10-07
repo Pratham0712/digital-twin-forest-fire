@@ -56,15 +56,74 @@ def regional_wind(twin) -> Optional[Tuple[float, float]]:
         return None
 
 
+MODE_LABEL = {"live": "LIVE", "cached": "CACHED", "error": "UNAVAILABLE", "demo": "DEMO",
+              "not_configured": "NOT CONFIGURED", "pending": "PENDING", "none": "DEMO"}
+
+
 def feed_status(twin) -> dict:
-    """LIVE only when the twin runs in live mode AND the feed's key is set."""
-    live = twin is not None and not getattr(twin, "offline", True)
-    return {
-        "live": live,
-        "firms": "LIVE" if live and os.getenv("FIRMS_MAP_KEY") else "DEMO",
-        "weather": "LIVE" if live and os.getenv("OWM_API_KEY") else "DEMO",
-        "maps": bool(os.getenv("GOOGLE_MAPS_API_KEY")),
-    }
+    """What each feed ACTUALLY delivered on the twin's last refresh (from the
+    ingestion layer's source_status), not what the sidebar asked for. LIVE only
+    when the real request succeeded; synthetic data is never called LIVE."""
+    ss = getattr(getattr(twin, "ingestion", None), "source_status", None) or {}
+    if twin is None:
+        f = w = "none"
+    else:
+        f = (ss.get("firms") or {}).get("mode") or ("demo" if getattr(twin, "offline", True) else "pending")
+        w = (ss.get("weather") or {}).get("mode") or ("demo" if getattr(twin, "offline", True) else "pending")
+    modes = {f, w}
+    if modes == {"live"}:
+        overall = "live"
+    elif "error" in modes:
+        overall = "error"
+    elif "cached" in modes:
+        overall = "cached"
+    elif "live" in modes:
+        overall = "partial"
+    else:
+        overall = "demo"
+    return {"live": overall == "live", "overall": overall,
+            "firms": MODE_LABEL.get(f, f.upper()), "weather": MODE_LABEL.get(w, w.upper()),
+            "firms_mode": f, "weather_mode": w,
+            "firms_status": ss.get("firms") or {}, "weather_status": ss.get("weather") or {},
+            "maps": bool(os.getenv("GOOGLE_MAPS_API_KEY"))}
+
+
+def data_badge(feeds: dict) -> Tuple[str, str]:
+    """(css class, text) for header / ticker badges."""
+    return {"live": ("live", "LIVE · REAL DATA"), "cached": ("demo", "CACHED DATA"),
+            "error": ("demo", "API UNAVAILABLE"), "partial": ("demo", "PARTLY LIVE")}.get(
+        feeds["overall"], ("demo", "DEMO / OFFLINE MODE"))
+
+
+def _utc(iso: Optional[str]) -> str:
+    return (iso or "")[:16].replace("T", " ").replace("+00:00", "").rstrip("Z") + (" UTC" if iso else "")
+
+
+def feed_text(kind: str, feeds: dict) -> str:
+    """One-line description of a feed for the ticker / status panels."""
+    mode = feeds[f"{kind}_mode"]
+    st_ = feeds[f"{kind}_status"]
+    if kind == "firms":
+        if mode == "live":
+            n = st_.get("n", 0)
+            return (f"LIVE · {n} detection(s) · latest observation {_utc(st_.get('latest_acq_utc'))}" if n else
+                    "LIVE · no NASA FIRMS detections in this region/time window")
+        if mode == "cached":
+            return f"CACHED · {st_.get('n', 0)} detection(s) fetched {_utc(st_.get('fetched_utc'))} (API unavailable)"
+        if mode == "error":
+            return "UNAVAILABLE · no detections shown"
+        if mode == "not_configured":
+            return "NOT CONFIGURED · synthetic detections (not observed)"
+        return "DEMO · synthetic detections"
+    if mode == "live":
+        return f"LIVE · fetched {_utc(st_.get('fetched_utc'))}"
+    if mode == "cached":
+        return f"CACHED · fetched {_utc(st_.get('fetched_utc'))} (API unavailable)"
+    if mode == "error":
+        return "UNAVAILABLE · risk computed without current weather"
+    if mode == "not_configured":
+        return "NOT CONFIGURED · synthetic weather"
+    return "DEMO · synthetic weather"
 
 
 def risk_level(summary: dict) -> Tuple[str, str]:
@@ -75,8 +134,8 @@ def risk_level(summary: dict) -> Tuple[str, str]:
     return "LOW", "ok"
 
 
-def ticker_items(twin=None) -> Tuple[bool, List[Tuple[str, str, str]]]:
-    """(is_live, [(dot class, label, value), ...])."""
+def ticker_items(twin=None) -> Tuple[dict, List[Tuple[str, str, str]]]:
+    """(feed status, [(dot class, label, value), ...])."""
     feeds = feed_status(twin)
     items: List[Tuple[str, str, str]] = []
     summary = twin.get_summary() if twin is not None and twin.current_snapshot is not None else None
@@ -94,7 +153,7 @@ def ticker_items(twin=None) -> Tuple[bool, List[Tuple[str, str, str]]]:
         w = regional_wind(twin)
         if w is not None:
             items.append(("data", "WIND", f"{w[0]:.1f} m/s from {compass(w[1])} ({w[1]:.0f}°) · regional mean"
-                                          + ("" if feeds["live"] else " · demo")))
+                                          + {"live": "", "cached": " · cached"}.get(feeds["weather_mode"], " · demo")))
         ts = (summary.get("timestamp") or "")[:16].replace("T", " ")
         if ts:
             items.append(("data", "LAST REFRESH", f"{ts} UTC"))
@@ -109,17 +168,26 @@ def ticker_items(twin=None) -> Tuple[bool, List[Tuple[str, str, str]]]:
         items.append(("warn", "SPREAD SIMULATION", "scenario applied · ready to run"))
     else:
         items.append(("ok", "SPREAD SIMULATION", "idle · no run this session"))
-    items.append(("ok" if feeds["firms"] == "LIVE" else "warn", "SATELLITE (FIRMS)",
-                  "LIVE" if feeds["firms"] == "LIVE" else "DEMO · synthetic detections"))
-    items.append(("ok" if feeds["weather"] == "LIVE" else "warn", "WEATHER (OWM)",
-                  "LIVE" if feeds["weather"] == "LIVE" else "DEMO · synthetic weather"))
-    items.append(("data" if feeds["maps"] else "warn", "MAP BASE",
-                  "Google satellite ready" if feeds["maps"] else "Google Maps key not set"))
-    return feeds["live"], items
+    dot = {"live": "ok", "error": "crit"}
+    items.append((dot.get(feeds["firms_mode"], "warn"), "NASA FIRMS", feed_text("firms", feeds)))
+    items.append((dot.get(feeds["weather_mode"], "warn"), "OPENWEATHERMAP", feed_text("weather", feeds)))
+    items.append(maps_item(feeds))
+    return feeds, items
+
+
+def maps_item(feeds: dict) -> Tuple[str, str, str]:
+    gs = st.session_state.get("gmaps_status") or {}
+    if not feeds["maps"]:
+        return "warn", "GOOGLE MAPS", "NOT CONFIGURED · set GOOGLE_MAPS_API_KEY"
+    if gs and not gs.get("ok"):
+        return "crit", "GOOGLE MAPS", "ERROR · " + str(gs.get("error") or "map did not load")[:80]
+    if gs.get("ok"):
+        return "ok", "GOOGLE MAPS", "satellite map loaded" + (" · 3D vector" if gs.get("vector") else " · 2D")
+    return "data", "GOOGLE MAPS", "key configured · satellite map loads in the browser"
 
 
 def ticker_html(twin=None) -> str:
-    live, items = ticker_items(twin)
+    feeds, items = ticker_items(twin)
     parts = []
     for cls, label, value in items:
         parts.append(f'<span class="gt-item"><i class="gt-dot {cls}"></i><b>{html.escape(label)}</b>'
@@ -129,7 +197,7 @@ def ticker_html(twin=None) -> str:
     # A negative delay derived from the clock keeps the scroll position
     # continuous across Streamlit reruns instead of restarting at zero.
     delay = -(time.time() % dur)
-    tag_cls, tag_txt = ("live", "LIVE") if live else ("demo", "DEMO / OFFLINE MODE")
+    tag_cls, tag_txt = data_badge(feeds)
     return (f'<div class="gt" role="region" aria-label="System status ticker">'
             f'<div class="gt-tag {tag_cls}"><span class="dot"></span>{tag_txt}</div>'
             f'<div class="gt-view"><div class="gt-track" style="--gt-dur:{dur:.0f}s;animation-delay:{delay:.1f}s">'

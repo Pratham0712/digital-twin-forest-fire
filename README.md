@@ -148,6 +148,29 @@ location search, **Geocoding API** or **Places API (New)** (either one; Geocodin
    * Analytics, CSV export of every step and GeoJSON export of the simulated burned cells.
    * The original regional 2-hour projection is kept in an expander.
 
+### Real data: NASA FIRMS, OpenWeatherMap, Google Maps
+
+Keys are read from `.env` (names in `.env.example`; `.env` is git-ignored and never printed). With
+keys set, the sidebar's *Offline / demo mode* is off by default and the real APIs are used:
+
+* **Regional twin** (all pages): NASA FIRMS `VIIRS_SNPP_NRT` detections for the region (last 10
+  days, used by the model's fire-history features) and OpenWeatherMap current weather on the
+  region's weather grid, refreshed at the auto-refresh interval or with *Refresh satellite & weather
+  data* (Command Center) / *Refresh data* (sidebar).
+* **Selected location** (What-If and Spread Simulation): OpenWeatherMap current weather at the focus
+  latitude/longitude and NASA FIRMS detections in a 25 × 25 km box around it (last 2 days), cached
+  10 / 15 minutes per place, with *Refresh weather* / *Refresh FIRMS* buttons. Shown as
+  **REAL WEATHER** and **NASA FIRMS** cards next to the **SCENARIO INPUT** card; the What-If values
+  drive the simulation, the real values are displayed, never mixed.
+* **Honest status**: each feed reports what it actually delivered: `LIVE`, `CACHED` (request failed,
+  last real response shown with its timestamp), `UNAVAILABLE` (no data shown, nothing invented),
+  `NOT CONFIGURED` or `DEMO`. The ticker, page badges and the Command Center *Data & system status*
+  use these; synthetic data is never labelled LIVE. API keys never appear in logs or messages.
+* **Maps**: the Command Center regional risk map, the What-If set-up map and the Spread Simulation map
+  are the same Google satellite component. Risk zones are drawn as semi-transparent model
+  predictions; NASA FIRMS detections are cyan circles (observed); simulated fire is drawn as
+  flames / burn scar; demo hotspots are purple and labelled synthetic.
+
 ### Fuel / non-fuel land cover
 
 Fire spreads only through fuel. Before each run the simulation domain is classified from

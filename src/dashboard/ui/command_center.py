@@ -13,7 +13,8 @@ import os
 import streamlit as st
 
 from src.dashboard.ui.assets import ALERT_THUMB, HERO_IMAGE, HERO_URL, data_uri
-from src.dashboard.ui.global_ticker import compass, feed_status, latest_spread, regional_wind
+from src.dashboard.ui.global_ticker import (compass, data_badge, feed_status, feed_text, latest_spread, maps_item,
+                                           regional_wind)
 
 SPREAD_PAGE = "pages/2_Spread_Simulation.py"
 
@@ -76,8 +77,10 @@ def render_status_strip(twin, summary: dict):
     feeds = feed_status(twin)
     bd = summary.get("severity_breakdown", {}) or {}
     pills = [_pill("ok", "SYSTEM", "Operational")]
-    pills.append(_pill("data" if feeds["live"] else "warn", "DATA",
-                       "Live feeds" if feeds["live"] else "Demo / offline (synthetic)"))
+    pills.append(_pill({"live": "data", "error": "crit"}.get(feeds["overall"], "warn"), "DATA",
+                       {"live": "Live · NASA FIRMS + OpenWeatherMap", "cached": "Cached (API unavailable)",
+                        "error": "API unavailable", "partial": "Partly live"}.get(feeds["overall"],
+                                                                                 "Demo / offline (synthetic)")))
     if bd.get("EXTREME"):
         pills.append(_pill("crit", "RISK", f"{bd['EXTREME']} extreme zone(s)"))
     elif bd.get("HIGH"):
@@ -113,7 +116,8 @@ def _stat(label: str, value: str, hot: bool = False) -> str:
 def alert_panel_model(twin, summary: dict) -> dict:
     """Content of the panel, from the simulation if one ran, else the model."""
     feeds = feed_status(twin)
-    data_chip = ("live", "LIVE DATA") if feeds["live"] else ("demo", "DEMO DATA")
+    data_chip = {"live": ("live", "LIVE DATA"), "cached": ("demo", "CACHED DATA"), "error": ("demo", "API UNAVAILABLE"),
+                 "partial": ("demo", "PARTLY LIVE")}.get(feeds["overall"], ("demo", "DEMO DATA"))
     spread = latest_spread()
     if spread is not None:
         src, res = spread
@@ -204,31 +208,112 @@ def _explore_card(col, i, idx, title, desc, target, icon):
 
 # ── data / system status ───────────────────────────────────────────────────── #
 
+def _dot(mode: str) -> str:
+    return {"live": "ok", "cached": "warn", "error": "crit"}.get(mode, "warn")
+
+
 def render_system_status(twin, summary: dict, offline: bool):
+    """NASA FIRMS / OpenWeatherMap / Google Maps / risk model / database status.
+    Only states that were actually observed are reported; no key is shown."""
     feeds = feed_status(twin)
+    fs, ws = feeds["firms_status"], feeds["weather_status"]
     persist = st.session_state.get("persist_result") or {}
+    from src.storage import database as db
+    fallback = None
+    try:
+        fallback = db.fallback_reason()
+    except Exception:
+        pass
     if persist.get("pending"):
         db_cls, db_txt = "data", "Saving snapshot to the database"
     elif persist.get("persisted"):
-        db_cls, db_txt = "ok", "Snapshot saved"
+        db_cls, db_txt = "ok", "Connected · snapshot saved"
         if persist.get("new_extreme_count"):
             db_txt += (f" · {persist['new_extreme_count']} newly-extreme zone(s), "
                        + ("email sent" if persist.get("emailed") else "email not configured"))
     elif persist:
         db_cls, db_txt = "warn", "Snapshot not saved (database unavailable this run)"
     else:
-        db_cls, db_txt = "data", "No refresh persisted yet"
+        db_cls, db_txt = "ok", "Connected"
+    if fallback:
+        db_txt += " · local SQLite fallback (cloud database unreachable)"
+    firms_extra = []
+    if fs.get("fetched_utc"):
+        firms_extra.append(f"fetched {str(fs['fetched_utc'])[:16].replace('T', ' ')} UTC")
+    if fs.get("error") and feeds["firms_mode"] in ("error", "cached"):
+        firms_extra.append(f"reason: {str(fs['error'])[:120]}")
+    w_extra = []
+    if feeds["weather_mode"] in ("live", "cached") and ws.get("n") is not None:
+        w_extra.append(f"{ws.get('n')}/{ws.get('n_total', ws.get('n'))} weather grid points of {twin.region.name}")
+    pw = st.session_state.get("_last_point_weather")
+    if pw:
+        w_extra.append(f"selected location: {pw}")
+    if ws.get("error") and feeds["weather_mode"] in ("error", "cached"):
+        w_extra.append(f"reason: {str(ws['error'])[:120]}")
+    m_cls, _, m_txt = maps_item(feeds)
+    from src.dashboard.dashboard_common import model_status_text
     ts = (summary.get("timestamp") or "")[:19].replace("T", " ")
     rows = [
-        ("ok" if feeds["firms"] == "LIVE" else "warn", "SATELLITE · NASA FIRMS VIIRS",
-         "Live detections" if feeds["firms"] == "LIVE" else "Demo: synthetic detections"),
-        ("ok" if feeds["weather"] == "LIVE" else "warn", "WEATHER · OPENWEATHERMAP",
-         "Live observations + forecast" if feeds["weather"] == "LIVE" else "Demo: synthetic weather"),
-        ("data" if feeds["maps"] else "warn", "MAP BASE · GOOGLE SATELLITE",
-         "API key configured" if feeds["maps"] else "Set GOOGLE_MAPS_API_KEY in .env"),
-        ("data", "RISK MODEL", f"{summary.get('total_zones', 0)} zones scored · refreshed {ts} UTC"),
+        (_dot(feeds["firms_mode"]), "NASA FIRMS · SATELLITE FIRE DETECTIONS",
+         " · ".join([feed_text("firms", feeds)] + firms_extra)),
+        (_dot(feeds["weather_mode"]), "OPENWEATHERMAP · CURRENT WEATHER",
+         " · ".join([feed_text("weather", feeds)] + w_extra)),
+        (m_cls, "GOOGLE MAPS · SATELLITE", m_txt[0].upper() + m_txt[1:]),
+        ("ok", "RISK MODEL · XGBOOST", f"Loaded · {model_status_text(twin.region)} · "
+                                       f"{summary.get('total_zones', 0)} zones scored {ts} UTC (model prediction)"),
         (db_cls, "DATABASE", db_txt),
     ]
     items = "".join(f'<div class="sys-item"><div class="l"><i class="gt-dot {c}"></i>{html.escape(l)}</div>'
                     f'<div class="v">{html.escape(v)}</div></div>' for c, l, v in rows)
     st.markdown(f'<div class="sys-grid">{items}</div>', unsafe_allow_html=True)
+
+
+# ── Command Center regional map: Google satellite + risk zones + detections ── #
+
+def region_hotspots(twin) -> tuple:
+    """(markers, kind, summary) for the regional map. Real FIRMS detections of
+    the last ~48 h when the feed is live (or cached); synthetic ones only in
+    demo mode and labelled as such; nothing when the API failed."""
+    from src.data_ingestion.live_point import hotspot_markers
+    feeds = feed_status(twin)
+    mode = feeds["firms_mode"]
+    h = getattr(twin.ingestion, "last_hotspots", None)
+    if h is not None and len(h) and "acq_date" in h.columns:
+        import pandas as pd
+        d = pd.to_datetime(h["acq_date"], errors="coerce")
+        h = h[d >= pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=1)]
+    markers = hotspot_markers(h) if h is not None else []
+    if mode in ("live", "cached"):
+        n = len(markers)
+        summary = (f"{n} NASA FIRMS detection(s), last 48 h" if n else "No NASA FIRMS detections, last 48 h")
+        if mode == "cached":
+            summary += " (cached)"
+        return markers, "observed", summary
+    if mode == "error":
+        return [], "observed", "NASA FIRMS unavailable: none shown"
+    return markers, "synthetic", f"{len(markers)} demo hotspot(s), synthetic"
+
+
+def render_region_map(twin, height: int = 560):
+    """Regional risk map on Google satellite (the same fire_map component and
+    Google Maps configuration as the What-If and Spread Simulation pages)."""
+    from src.dashboard.geo_fire_map import missing_key_card, region_payload, render_fire_map
+    from src.dashboard.geo_spread import google_maps_key, google_maps_map_id
+    st.markdown('<div class="sec-hdr">Regional risk map · Google satellite</div>', unsafe_allow_html=True)
+    key = google_maps_key()
+    snap = twin.current_snapshot
+    if not key:
+        missing_key_card()
+        from src.dashboard.dashboard_common import render_risk_map
+        render_risk_map(snap.processed_grid, snap.risk_scores, twin.region, height=height, header=False)
+        return
+    markers, kind, hsum = region_hotspots(twin)
+    feeds = feed_status(twin)
+    note = ("Zone colour = XGBoost fire-risk prediction (model output, not an observation). "
+            + ("Dots = NASA FIRMS VIIRS satellite detections (observed)." if kind == "observed"
+               else "Dots = synthetic demo hotspots (not observed)."))
+    if feeds["overall"] in ("error", "cached"):
+        note += " Some live data is unavailable; see Data & system status."
+    payload = region_payload(twin, markers, kind, hsum, note, key, google_maps_map_id(), height=height)
+    with st.container(key="cc_regionmap"):
+        render_fire_map(payload, key="cc_region_map")

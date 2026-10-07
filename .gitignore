@@ -25,3 +25,7 @@ data/*.db
 !data/processed/model_comparison_2026.csv
 !data/processed/model_comparison_alert_2026.csv
 !data/processed/india_model_by_state_2026.csv
+
+# Local caches of downloaded geodata (re-created automatically)
+models/land_cover/
+models/focus_terrain/

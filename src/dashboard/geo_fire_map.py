@@ -96,7 +96,9 @@ def _playback_seconds_per_step(end_t: float) -> float:
 
 def setup_payload(focus: FocusArea, duration_minutes: float, wind_speed_ms: float, wind_from_deg: float,
                   n_ignition: int, placement: str, ignition_points: Sequence[Tuple[float, float]],
-                  layers: dict, api_key: str, map_id: str, height: int = 560, search: bool = True) -> dict:
+                  layers: dict, api_key: str, map_id: str, height: int = 560, search: bool = True,
+                  hotspots: Optional[List[dict]] = None, hotspot_kind: str = "observed",
+                  hotspot_summary: str = "") -> dict:
     domain = domain_for(focus, duration_minutes)
     f, d = _geometry(focus, domain)
     preview = ignition_mask(domain, n_ignition, placement, wind_speed_ms, wind_from_deg, ignition_points)
@@ -106,7 +108,8 @@ def setup_payload(focus: FocusArea, duration_minutes: float, wind_speed_ms: floa
          "placement": placement, "preview": np.flatnonzero(preview.ravel()).tolist(),
          "ignitionPoints": [list(p) for p in ignition_points or []],
          "wind": [[round(float(wind_speed_ms), 2), round(float(wind_from_deg) % 360, 1)]],
-         "metrics": [], "layers": layers, "hotspots": [], "hotspotKind": "synthetic"}
+         "metrics": [], "layers": layers, "hotspots": hotspots or [], "hotspotKind": hotspot_kind,
+         "hotspotSummary": hotspot_summary}
     p["uid"] = _uid(p)
     return p
 
@@ -114,13 +117,15 @@ def setup_payload(focus: FocusArea, duration_minutes: float, wind_speed_ms: floa
 def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[LocalSpreadResult],
                 wind_speed_ms: float, wind_from_deg: float, hotspots: List[dict], hotspot_kind: str,
                 n_ignition: int, placement: str, ignition_points: Sequence[Tuple[float, float]],
-                layers: dict, autoplay: bool, api_key: str, map_id: str, height: int = 660) -> dict:
+                layers: dict, autoplay: bool, api_key: str, map_id: str, height: int = 660,
+                hotspot_summary: str = "") -> dict:
     domain = result.domain if result is not None else domain_for(focus, duration_minutes)
     f, d = _geometry(focus, domain)
     p = {"mode": "sim", "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
          "focus": f, "domain": d, "editable": False, "search": False,
          "durationMin": float(duration_minutes), "durationLabel": duration_label(duration_minutes),
-         "hotspots": hotspots, "hotspotKind": hotspot_kind, "layers": layers, "autoplay": bool(autoplay),
+         "hotspots": hotspots, "hotspotKind": hotspot_kind, "hotspotSummary": hotspot_summary,
+         "layers": layers, "autoplay": bool(autoplay),
          "placement": placement, "ignitionPoints": [list(p) for p in ignition_points or []]}
     if result is None:
         preview = ignition_mask(domain, n_ignition, placement, wind_speed_ms, wind_from_deg, ignition_points)
@@ -160,6 +165,48 @@ def _land_cover_payload(result: LocalSpreadResult) -> Optional[dict]:
             "cells": {str(int(k)): np.flatnonzero(flat == k).tolist() for k in np.unique(flat) if int(k) != 0}}
 
 
+_SEV_CODE = {"LOW": 0, "MODERATE": 1, "HIGH": 2, "EXTREME": 3}
+
+
+def region_payload(twin, hotspots: List[dict], hotspot_kind: str, hotspot_summary: str, source_note: str,
+                   api_key: str, map_id: str, height: int = 560) -> dict:
+    """Command Center overview: model risk per grid zone (MODEL PREDICTION) and
+    satellite detections (OBSERVED, or synthetic in demo mode) on Google
+    satellite. Only display data - nothing here changes the risk values."""
+    snap = twin.current_snapshot
+    g = snap.processed_grid
+    r = twin.region
+    risk = np.asarray(snap.risk_scores, float)
+    engine = getattr(twin, "alert_engine", None)
+    sev = [_SEV_CODE.get(engine.classify(float(v)), 0) if engine is not None else 0 for v in risk]
+    fwi = g["fwi"].to_numpy(float) if "fwi" in g else np.full(len(g), np.nan)
+    act = g["active_fire_nearby"].astype(bool).to_numpy() if "active_fire_nearby" in g else np.zeros(len(g), bool)
+    p = {"mode": "region", "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
+         "region": {"name": r.name, "south": r.min_lat, "north": r.max_lat, "west": r.min_lon, "east": r.max_lon},
+         "res": float(r.grid_resolution_deg), "alerts": int(len(snap.alerts)),
+         "zones": {"lat": np.round(g["latitude"].to_numpy(float), 4).tolist(),
+                   "lon": np.round(g["longitude"].to_numpy(float), 4).tolist(),
+                   "risk": np.round(risk, 3).tolist(), "sev": sev,
+                   "fwi": [None if not np.isfinite(v) else round(float(v), 1) for v in fwi],
+                   "act": [int(v) for v in act], "ids": g["zone_id"].astype(str).tolist()},
+         "hotspots": hotspots, "hotspotKind": hotspot_kind, "hotspotSummary": hotspot_summary,
+         "sourceNote": source_note, "timestamp": str(snap.timestamp)}
+    p["uid"] = _uid(p)
+    return p
+
+
+def record_map_status(event: Optional[dict]):
+    """The browser reports whether Google Maps loaded (once per tab); kept for
+    the Data & System Status panel."""
+    if isinstance(event, dict) and event.get("kind") == "mapstatus":
+        if (st.session_state.get("gmaps_status") or {}).get("nonce") == event.get("nonce"):
+            return
+        from datetime import datetime, timezone
+        st.session_state["gmaps_status"] = {"ok": bool(event.get("ok")), "vector": bool(event.get("vector")),
+                                            "error": event.get("error"), "nonce": event.get("nonce"),
+                                            "utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
+
+
 def missing_key_card():
     st.markdown("""
     <div class="info-box" style="border-color:rgba(255,107,74,.45);">
@@ -173,7 +220,9 @@ def missing_key_card():
 def render_fire_map(payload: dict, key: str) -> Optional[dict]:
     """Draw the map component; returns the latest event it sent (or None).
     Events carry a unique `nonce`; callers handle each nonce once."""
-    return _fire_map(payload=payload, key=key, default=None)
+    ev = _fire_map(payload=payload, key=key, default=None)
+    record_map_status(ev)
+    return ev
 
 
 def new_event(event: Optional[dict], state_key: str) -> Optional[dict]:

@@ -14,14 +14,15 @@ sys.path.append(str(Path(__file__).resolve().parents[3]))
 import streamlit as st
 
 from src.dashboard.dashboard_common import (
-    set_page, build_sidebar, get_twin, render_header, render_kpi_row, render_risk_map,
+    set_page, build_sidebar, get_twin, render_header, render_kpi_row,
     render_risk_gauge, render_alerts, render_ca_simulation, render_scenario_controls, SYSTEM,
     log_action,
 )
 
 from src.auth.auth_gate import require_login, render_user_badge_in_sidebar
-from src.dashboard.geo_spread import (apply_and_open_spread, get_setup, render_setup_controls,
+from src.dashboard.geo_spread import (apply_and_open_spread, get_setup, live_offline, render_setup_controls,
                                      render_setup_map, render_setup_summary)
+from src.dashboard.ui.live_panel import live_observations, map_hotspots, render_live_conditions
 
 set_page("What-If Simulator")
 require_login()
@@ -83,7 +84,16 @@ if setup_error:
     st.error(setup_error)
 else:
     render_setup_summary(setup, twin)
-    render_setup_map(setup, "wi_setup", twin, float(scenario["wind_speed_ms"]), float(scenario["wind_from_deg"]))
+    # Real observations at the selected location (OpenWeatherMap + NASA FIRMS), kept
+    # apart from the scenario inputs above; FIRMS detections are drawn on the map.
+    _loc = setup["location"]
+    _demo = live_offline()
+    _live = live_observations(_loc["lat"], _loc["lon"], "wi", _demo)
+    _hot, _kind, _hsum = map_hotspots(_live[2], _live[3])
+    render_setup_map(setup, "wi_setup", twin, float(scenario["wind_speed_ms"]), float(scenario["wind_from_deg"]),
+                     hotspots=_hot, hotspot_kind=_kind, hotspot_summary=_hsum)
+    render_live_conditions(_loc["lat"], _loc["lon"], _loc.get("name", ""), "wi", _demo, scenario=scenario,
+                           data=_live)
 
 b_apply, b_open = st.columns(2)
 run = b_apply.button("Apply scenario", use_container_width=True)
@@ -139,11 +149,12 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-col_map, col_side = st.columns([3, 1], gap="medium")
-with col_map:
-    render_risk_map(snap.processed_grid, snap.risk_scores, twin.region, scenario_active=True)
-with col_side:
+# (The regional CARTO risk map that used to sit here was removed: the Google
+# satellite map above is the one map of the simulation location on this page.)
+col_gauge, col_alerts = st.columns([1, 2], gap="medium")
+with col_gauge:
     render_risk_gauge(summary)
+with col_alerts:
     render_alerts(snap.alerts, summary, limit=8)
 
 st.markdown("---")

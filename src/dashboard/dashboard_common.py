@@ -43,6 +43,10 @@ if _secret("OWM_API_KEY"):
 for _k in ("GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_MAP_ID"):
     if _secret(_k):
         os.environ[_k] = _secret(_k)
+# config.API read the environment at import; pick up keys supplied via Streamlit Secrets too
+from config.config import API as _API
+_API.firms_map_key = os.getenv("FIRMS_MAP_KEY", _API.firms_map_key)
+_API.owm_api_key = os.getenv("OWM_API_KEY", _API.owm_api_key)
 
 
 def set_page(title: str, icon: str = ":material/local_fire_department:"):
@@ -235,6 +239,26 @@ def load_ml_model(region=None):
     """Trained model serving `region` (Karnataka model by default)."""
     from src.ml_models.model_registry import choose_for_region
     return _load_model_file(choose_for_region(region).model_file)
+
+
+def model_status_text(region=None) -> str:
+    """Which trained model serves this region, and its version metadata."""
+    from src.ml_models.model_registry import choose_for_region
+    choice = choose_for_region(region)
+    meta_file = {"xgboost_real.json": "training_metadata_real.json",
+                 "xgboost_india.json": "training_metadata_india.json"}.get(choice.model_file)
+    bits = [choice.label, choice.model_file]
+    try:
+        import json as _json
+        meta = _json.loads((MODELS_DIR / meta_file).read_text()) if meta_file else {}
+        if meta.get("feature_set_version"):
+            bits.append(f"feature set {meta['feature_set_version']}")
+        rng = meta.get("train_date_range")
+        if rng:
+            bits.append("trained on " + (" to ".join(map(str, rng)) if isinstance(rng, (list, tuple)) else str(rng)))
+    except Exception:
+        pass
+    return " · ".join(bits)
 
 
 def get_twin(offline: bool, scenario: dict = None, region=None) -> DigitalTwin:
@@ -664,8 +688,11 @@ def render_wind_compass(wind_from_deg: float, wind_speed_ms: float, label: str =
 
 def render_header(summary: dict, offline: bool, subtitle: str = None, region=None):
     region = region or REGION
-    badge_cls = "badge-demo" if offline else "badge-live"
-    badge_txt = "DEMO" if offline else "LIVE"
+    badge_cls, badge_txt = "badge-demo", "DEMO"
+    if not offline:
+        from src.dashboard.ui.global_ticker import data_badge, feed_status
+        cls, badge_txt = data_badge(feed_status(st.session_state.get("twin")))
+        badge_cls = "badge-live" if cls == "live" else "badge-demo"
     ts = summary.get("timestamp", "")[:19].replace("T", " ")
     title = subtitle or "Forest Fire Digital Twin"
     st.markdown(f"""
@@ -779,8 +806,11 @@ def _zoom_for(region) -> float:
 
 
 def render_risk_map(processed: pd.DataFrame, risk_scores: np.ndarray, region=REGION, height=520,
-                     scenario_active: bool = False):
-    st.markdown('<div class="sec-hdr">Regional risk map</div>', unsafe_allow_html=True)
+                     scenario_active: bool = False, header: bool = True):
+    """Plotly regional map. Only used as the fallback when no Google Maps key is
+    configured (the Command Center uses the Google satellite map otherwise)."""
+    if header:
+        st.markdown('<div class="sec-hdr">Regional risk map</div>', unsafe_allow_html=True)
     # The figure only changes when the snapshot does, so build it once per
     # snapshot instead of on every Streamlit rerun (tab switch, slider, etc.).
     cache = st.session_state.setdefault("_map_cache", {})

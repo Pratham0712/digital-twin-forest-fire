@@ -35,6 +35,7 @@ from config.config import SYSTEM
 from src.dashboard.dashboard_common import _compass_direction_name, log_action
 from src.dashboard.geo_fire_map import (duration_label, hotspots_near, missing_key_card, new_event,
                                         render_fire_map, setup_payload, sim_payload)
+from src.dashboard.ui.live_panel import live_observations, map_hotspots, render_live_conditions
 from src.simulation.fuel_map import CLASS_NAMES, FUEL, domain_land_cover
 from src.simulation.local_spread import (DEFAULT_FOCUS, FOCUS_AREAS, HIGHEST_RISK_FOCUS, PLACEMENTS,
                                          FocusArea, domain_elevation, domain_for, focus_options_for_region,
@@ -256,8 +257,16 @@ def _location_notes(setup: dict, twin):
                    "(the model assumes burnable vegetation inside the area).")
 
 
-def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from_deg: float, height: int = 540):
-    """Interactive set-up map: search, drag/resize box, click-to-ignite."""
+def live_offline() -> bool:
+    """The sidebar's demo / offline choice (live by default when keys are set)."""
+    from src.dashboard.dashboard_common import _pref
+    return bool(_pref("offline_mode", not bool(os.getenv("FIRMS_MAP_KEY"))))
+
+
+def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from_deg: float, height: int = 540,
+                     hotspots=None, hotspot_kind: str = "observed", hotspot_summary: str = ""):
+    """Interactive set-up map: search, drag/resize box, click-to-ignite, real
+    NASA FIRMS detections around the location."""
     key = google_maps_key()
     if not key:
         missing_key_card()
@@ -267,7 +276,8 @@ def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from
         return
     payload = setup_payload(f, setup["duration_min"], wind_speed_ms, wind_from_deg, setup["n_ignition"],
                             setup["placement"], setup["ignition_points"], setup["layers"], key,
-                            google_maps_map_id(), height=height)
+                            google_maps_map_id(), height=height, hotspots=hotspots or [],
+                            hotspot_kind=hotspot_kind, hotspot_summary=hotspot_summary)
     ev = new_event(render_fire_map(payload, key=f"{kp}_map"), f"{kp}_map")
     if ev and apply_map_event(ev, setup, twin):
         st.session_state[f"_{kp}_sync"] = True
@@ -406,14 +416,22 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
                    twin.region.name)
     result = st.session_state.get(res_key)
 
-    hot = hotspots_near(getattr(twin.ingestion, "last_hotspots", None), f.lat, f.lon)
-    live = (not twin.offline) and bool(os.getenv("FIRMS_MAP_KEY"))
+    # Real observations at the focus location (cached; not in demo mode). The map
+    # shows real NASA FIRMS detections only; synthetic hotspots appear only in
+    # demo mode and are labelled as such.
+    demo = live_offline()
+    live_data = live_observations(f.lat, f.lon, kp, demo)
+    if demo:
+        hot = hotspots_near(getattr(twin.ingestion, "last_hotspots", None), f.lat, f.lon)
+        hot_kind, hot_summary = "synthetic", (f"{len(hot)} demo (synthetic)" if hot else "-")
+    else:
+        hot, hot_kind, hot_summary = map_hotspots(live_data[2], live_data[3])
     key = google_maps_key()
     if key:
         payload = sim_payload(f, setup["duration_min"], result, wind_speed_ms, wind_from_deg, hot,
-                              "observed" if live else "synthetic", setup["n_ignition"], setup["placement"],
+                              hot_kind, setup["n_ignition"], setup["placement"],
                               setup["ignition_points"], setup["layers"], autoplay=result is not None,
-                              api_key=key, map_id=google_maps_map_id())
+                              api_key=key, map_id=google_maps_map_id(), hotspot_summary=hot_summary)
         ev = new_event(render_fire_map(payload, key=f"{kp}_simmap"), f"{kp}_simmap")
         if ev and ev.get("kind") == "ignite" and apply_map_event(ev, setup, twin):
             st.session_state[f"_{kp}_set_sync"] = True
@@ -424,6 +442,7 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
     st.caption(f"{wind_label}: {wind_speed_ms:.1f} m/s from the {_compass_direction_name(wind_from_deg)} "
                f"({wind_from_deg:.0f}°), pushing fire and smoke towards the "
                f"{_compass_direction_name(wind_from_deg + 180)}.")
+    render_live_conditions(f.lat, f.lon, loc.get("name", ""), kp, demo, scenario=scenario, data=live_data)
 
     if result is None:
         st.markdown('<div class="info-box">Press <b>Run Simulation</b> to compute the spread from the ignition '

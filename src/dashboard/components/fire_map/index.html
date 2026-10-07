@@ -27,6 +27,9 @@
   Ctrl + left-drag rotates (heading) and tilts the 3-D view; Shift + drag is Google's own.
 
   Modes
+    region: Command Center overview. Google satellite + semi-transparent model risk
+            zones (MODEL PREDICTION) + NASA FIRMS detections (OBSERVED) or, in demo
+            mode, synthetic hotspots labelled as such. Hover a zone for its values.
     setup : editable/draggable focus rectangle, Google search, click-to-ignite.
             Emits {kind:'area'|'place'|'ignite'|'layers'} back to Python.
     sim   : plays a CA history computed in Python (Python decides which cell burns
@@ -88,6 +91,17 @@ button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.
 #toast{left:50%;transform:translateX(-50%);top:58px;padding:7px 12px;max-width:380px;color:var(--text);display:none;z-index:12;text-align:center}
 .sep{width:1px;height:18px;background:var(--border);margin:0 2px}
 .hide{display:none!important}
+#rinfo{top:10px;left:10px;padding:10px 12px;width:270px;pointer-events:none}
+#rinfo .g{grid-template-columns:auto 1fr}
+#rinfo .t{color:#ffb38a} #rinfo .sim{margin-top:6px;color:var(--muted);font-size:9.5px;line-height:1.4}
+#rlegend{left:10px;bottom:24px;padding:8px 11px;line-height:1.65;pointer-events:none;font-size:10.5px;width:210px}
+#rlegend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+#rlegend .h{color:var(--muted);font-size:9px;letter-spacing:.12em;text-transform:uppercase;margin-top:3px}
+#rlegend .rbar{height:8px;border-radius:4px;margin:4px 0 2px;background:linear-gradient(90deg,rgba(30,58,95,.5),rgba(138,100,16,.75) 40%,#e0a21b 65%,#ff8a3d 80%,#ff5a3c)}
+#rlegend .rbar-l{display:flex;justify-content:space-between;color:var(--muted);font-size:9px;margin-bottom:3px}
+#rtools{right:10px;top:58px;padding:6px}
+#rtip{padding:8px 10px;font-size:11px;pointer-events:none;min-width:170px;z-index:14}
+#rtip b{font-size:12px}
 </style></head>
 <body>
 <div id="wrap">
@@ -129,6 +143,7 @@ button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.
       <span>Cell</span><span id="acell"></span>
       <span>Domain (with margin)</span><span id="adom"></span>
       <span>Ignition</span><span id="aign"></span>
+      <span>NASA FIRMS</span><span id="ahot">-</span>
     </div>
     <div class="sim" style="margin-top:6px;color:var(--muted);font-size:9.5px">Drag the box to move it, drag its corners or edges to resize. Values update when you release.</div>
   </div>
@@ -156,10 +171,11 @@ button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.
     <div class="h">Computational model</div>
     <div><i style="background:transparent;border:2px solid #8FD3FF"></i>Focus area</div>
     <div><i style="background:transparent;border:1px dashed #8a96a6"></i>Simulation domain</div>
+    <div><i style="background:repeating-linear-gradient(90deg,transparent 0 3px,rgba(232,240,255,.5) 3px 4px)"></i>Grid (CA cells)</div>
     <div><i style="background:transparent;border:2px solid #ffd166;border-radius:50%"></i>Ignition</div>
     <div class="h">Simulated</div>
-    <div><i style="background:linear-gradient(0deg,#b3260a,#ff9a2e,#fff0b0)"></i>Burning</div>
-    <div><i style="background:#3a1a0c"></i>Recently burned</div>
+    <div><i style="background:linear-gradient(0deg,#b3260a,#ff9a2e,#fff0b0)"></i>Simulated fire (burning)</div>
+    <div><i style="background:#3a1a0c"></i>Simulated burned area</div>
     <div><i style="background:#2a2725"></i>Burned / charred</div>
     <div><i style="background:linear-gradient(90deg,#3b3836,#a9a7a3)"></i>Smoke (wind-driven)</div>
     <div id="llc" class="hide"><div class="h">Land cover · no fuel (OpenStreetMap)</div>
@@ -200,6 +216,28 @@ button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.
     <input id="tl" type="range" min="0" max="0" step="0.001" value="0">
     <span id="tlab">T+0 s</span>
   </div>
+  <div id="rinfo" class="panel hide">
+    <div class="t">Regional risk · Google satellite</div>
+    <div class="nm" id="rname"></div>
+    <div class="g">
+      <span>Grid zones</span><span id="rzones"></span>
+      <span>Alert zones</span><span id="ralerts"></span>
+      <span>Risk</span><span>Model prediction</span>
+      <span>Hotspots</span><span id="rhot"></span>
+    </div>
+    <div class="sim" id="rsrc"></div>
+  </div>
+  <div id="rlegend" class="panel hide">
+    <div class="h">Model prediction · fire risk</div>
+    <div class="rbar"></div><div class="rbar-l"><span>0%</span><span>40% alert</span><span>100%</span></div>
+    <div><i style="background:transparent;border:1.5px solid #ff3b3b"></i>Extreme zone</div>
+    <div><i style="background:transparent;border:1.5px solid #ffb347"></i>High zone</div>
+    <div class="h">Satellite detections</div>
+    <div id="rlhot"><i style="background:#4dd0e1;border-radius:50%"></i>NASA FIRMS observed hotspot</div>
+    <div><i style="background:transparent;border:2px solid rgba(255,138,0,.85);border-radius:50%"></i>Zone with active fire nearby</div>
+  </div>
+  <div id="rtools" class="panel hide"><button id="rFit">Fit region</button></div>
+  <div id="rtip" class="panel hide"></div>
   <div id="toast" class="panel"></div>
   <div id="err"></div>
 </div>
@@ -221,7 +259,7 @@ const COMPASS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W
 const compass=d=>COMPASS[Math.round(((d%360)+360)%360/22.5)%16];
 function toast(msg,ms){const n=$('toast');n.textContent=msg;n.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>n.style.display='none',ms||4200);}
 function showErr(msg){const e=$('err');e.innerHTML=msg;e.style.display='flex';}
-window.gm_authFailure=function(){showErr('<div><b>Google Maps authentication failed.</b><br>Check that the API key has the Maps JavaScript API enabled, billing is active and the key allows this address (localhost).</div>');};
+window.gm_authFailure=function(){reportMapStatus({ok:false,error:'Google Maps authentication failed (key, Maps JavaScript API or billing)'});showErr('<div><b>Google Maps authentication failed.</b><br>Check that the API key has the Maps JavaScript API enabled, billing is active and the key allows this address (localhost).</div>');};
 
 // ── state (replaced in place when Python sends a new payload) ───────────────
 let P=null, UID=null, MODE=null;
@@ -627,6 +665,7 @@ function updateAreaPanel(){
   setTxt('aarea',(f.width_m*f.height_m/1e6).toFixed(2)+' km²');
   setTxt('agrid',f.n_cols+' × '+f.n_rows);setTxt('acell',f.cell_m+' m');
   setTxt('adom',Math.round(DC*CELL)+' × '+Math.round(DR*CELL)+' m');
+  setTxt('ahot',P.hotspotSummary||(P.hotspots&&P.hotspots.length?P.hotspots.length+(P.hotspotKind==='observed'?' observed':' demo (synthetic)'):'-'));
   setTxt('aign',PICKS.length?PICKS.length+' map point'+(PICKS.length>1?'s':''):(P.placement||'-'));
 }
 function liveArea(b){         // live readout while the rectangle is being dragged/resized (no rerun)
@@ -850,6 +889,7 @@ function loop(now){
   if(budget<=0.36&&frameMs>32&&RS>0.6&&now-(loop.rsT||0)>1500){RS=Math.round((RS-0.1)*10)/10;resize();loop.rsT=now;}
   else if(frameMs<15&&RS<1&&now-(loop.rsT||0)>3000){RS=Math.round((RS+0.1)*10)/10;resize();loop.rsT=now;}
   if(!P||!map)return;
+  if(MODE==='region'){renderRegion();return;}
   if(playing){const secPerStep=P.secPerStep||1.1;simT=Math.min(ENDT,simT+dt*speed/secPerStep);tl.value=String(simT);if(simT>=ENDT-1e-9)setPlaying(false);}
   if(GLOV&&MVP&&!MVP_BAD){
     // 3-D: draw inside Google's own frame (onDraw) so effects and imagery use the same camera
@@ -859,7 +899,7 @@ function loop(now){
   updateHud(false);updateWind();
 }
 function onGLDraw(transformer){
-  if(!P||MVP_BAD){MVP=null;return;}
+  if(!P||MVP_BAD||MODE==='region'){MVP=null;return;}
   const m=transformer.fromLatLngAltitude({lat:LAT0,lng:LON0,altitude:0});
   MVP=Float64Array.from(m);
   checkMVP();if(!MVP)return;
@@ -867,9 +907,96 @@ function onGLDraw(transformer){
 }
 document.addEventListener('visibilitychange',()=>{if(document.hidden){cancelAnimationFrame(raf);raf=null;}else if(!raf){last=null;raf=requestAnimationFrame(loop);}});
 
+// ── Google Maps status -> Python (once per browser tab and status) ─────────
+function reportMapStatus(o){
+  try{const k='fire_map_status',v=JSON.stringify(o);if(sessionStorage.getItem(k)===v)return;sessionStorage.setItem(k,v);}catch(e){}
+  emit(Object.assign({kind:'mapstatus'},o));
+}
+
+// ── region mode (Command Center): satellite + model risk zones + detections ──
+let RZ=null,RKEY='',RDIRTY=true,RFITTED=false;
+const RISK_STOPS=[[0,[21,34,56]],[0.2,[30,58,95]],[0.4,[138,100,16]],[0.65,[224,162,27]],[0.8,[255,138,61]],[1,[255,90,60]]];
+function riskRGB(v){v=clamp(v,0,1);for(let k=1;k<RISK_STOPS.length;k++){const [b,cb]=RISK_STOPS[k];if(v<=b){const [a,ca]=RISK_STOPS[k-1],f=(v-a)/(b-a);
+  return ca.map((c,j)=>Math.round(c+(cb[j]-c)*f));}}return RISK_STOPS[RISK_STOPS.length-1][1];}
+const SEV_NAME=['LOW','MODERATE','HIGH','EXTREME'];
+function applyRegion(p){
+  const o=P&&P.region,r0=p.region;
+  if(!o||o.name!==r0.name||o.south!==r0.south||o.north!==r0.north||o.west!==r0.west||o.east!==r0.east)RFITTED=false;
+  P=p;MODE='region';UID=p.uid;
+  const r=p.region;LAT0=(r.south+r.north)/2;LON0=(r.west+r.east)/2;MLON=111320*Math.cos(LAT0*Math.PI/180);
+  const z=p.zones,n=z.lat.length,res=p.res;
+  RZ={n,res,lat:z.lat,lon:z.lon,risk:z.risk,sev:z.sev,fwi:z.fwi,act:z.act,ids:z.ids,idx:new Map(),lat0:Math.min(...z.lat),lon0:Math.min(...z.lon)};
+  for(let i=0;i<n;i++)RZ.idx.set(Math.round((z.lat[i]-RZ.lat0)/res)+','+Math.round((z.lon[i]-RZ.lon0)/res),i);
+  for(const id of ['hud','ctrl','layers','legend','area','search','cam','tools','wind'])$(id).classList.add('hide');
+  for(const id of ['rinfo','rlegend','rtools'])$(id).classList.remove('hide');
+  setTxt('rname',r.name);setTxt('rzones',String(n));setTxt('ralerts',String(p.alerts));
+  setTxt('rhot',p.hotspotSummary||'-');$('rsrc').textContent=p.sourceNote||'';
+  $('rlhot').innerHTML=p.hotspotKind==='observed'?'<i style="background:#4dd0e1;border-radius:50%"></i>NASA FIRMS observed hotspot'
+    :'<i style="background:#b39ddb;border-radius:50%"></i>Demo hotspot (synthetic, not observed)';
+  $('wrap').style.height=p.height+'px';setHeight(p.height+4);resize();
+  ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,cvs.width,cvs.height);ctxS.setTransform(1,0,0,1,0,0);ctxS.clearRect(0,0,cvsS.width,cvsS.height);
+  RDIRTY=true;if(gmReady)syncRegionObjects();
+}
+function fitRegion(){if(!map||!P||MODE!=='region')return;const r=P.region;map.fitBounds({north:r.north,south:r.south,east:r.east,west:r.west},8);}
+function syncRegionObjects(){
+  if(focusRect)focusRect.setVisible(false);
+  hotCircles.forEach(c=>c.setMap(null));hotCircles=[];RDIRTY=true;
+  if(map&&!RFITTED){RFITTED=true;fitRegion();}
+}
+function regionPx(lat,lng){const q=proj.fromLatLngToContainerPixel(new google.maps.LatLng(lat,lng));return q?[q.x,q.y]:null;}
+function renderRegion(){
+  if(!proj||!RZ)return;
+  const a=regionPx(P.region.north,P.region.west),b=regionPx(P.region.south,P.region.east);if(!a||!b)return;
+  const key=a.map(v=>v.toFixed(1))+'|'+b.map(v=>v.toFixed(1))+'|'+CW+'x'+CH;
+  if(key===RKEY&&!RDIRTY)return;RKEY=key;RDIRTY=false;
+  ctxG.setTransform(1,0,0,1,0,0);ctxG.clearRect(0,0,cvsG.width,cvsG.height);ctxG.setTransform(DPR,0,0,DPR,0,0);
+  ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,cvs.width,cvs.height);ctx.setTransform(DPR,0,0,DPR,0,0);
+  const h=RZ.res/2,memo=new Map(),corner=(la,lo)=>{const k=la.toFixed(4)+','+lo.toFixed(4);let v=memo.get(k);if(!v){v=regionPx(la,lo);memo.set(k,v);}return v;};
+  let cellPx=0;
+  for(let i=0;i<RZ.n;i++){
+    const la=RZ.lat[i],lo=RZ.lon[i],p1=corner(la+h,lo-h),p2=corner(la+h,lo+h),p3=corner(la-h,lo+h),p4=corner(la-h,lo-h);
+    if(!p1||!p3)continue;
+    const minx=Math.min(p1[0],p4[0]),maxx=Math.max(p2[0],p3[0]),miny=Math.min(p1[1],p2[1]),maxy=Math.max(p3[1],p4[1]);
+    if(maxx<0||minx>CW||maxy<0||miny>CH)continue;cellPx=Math.max(cellPx,maxx-minx);
+    const v=RZ.risk[i],c=riskRGB(v),al=clamp(0.05+0.50*Math.pow(v,1.15),0.05,0.55);   // low risk stays almost clear
+    ctxG.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${al})`;ctxG.beginPath();ctxG.moveTo(p1[0],p1[1]);ctxG.lineTo(p2[0],p2[1]);
+    ctxG.lineTo(p3[0],p3[1]);ctxG.lineTo(p4[0],p4[1]);ctxG.closePath();ctxG.fill();
+    if(RZ.sev[i]>=2){ctxG.strokeStyle=RZ.sev[i]===3?'rgba(255,59,59,0.95)':'rgba(255,179,71,0.85)';ctxG.lineWidth=RZ.sev[i]===3?1.6:1.1;ctxG.stroke();}
+  }
+  if(cellPx>=10){ctxG.strokeStyle='rgba(255,255,255,0.07)';ctxG.lineWidth=0.6;ctxG.beginPath();
+    for(let i=0;i<RZ.n;i++){const la=RZ.lat[i],lo=RZ.lon[i],p1=corner(la+h,lo-h),p2=corner(la+h,lo+h),p3=corner(la-h,lo+h);
+      if(p1&&p2&&p3){ctxG.moveTo(p1[0],p1[1]);ctxG.lineTo(p2[0],p2[1]);ctxG.lineTo(p3[0],p3[1]);}}ctxG.stroke();}
+  // zones with active fire nearby (model input), then detections on top
+  ctx.globalCompositeOperation='source-over';
+  for(let i=0;i<RZ.n;i++){if(!RZ.act[i])continue;const q=regionPx(RZ.lat[i],RZ.lon[i]);if(!q)continue;
+    ctx.strokeStyle='rgba(255,138,0,0.7)';ctx.lineWidth=1.4;ctx.beginPath();ctx.arc(q[0],q[1],clamp(cellPx*0.16,4,12),0,Math.PI*2);ctx.stroke();}
+  const obs=P.hotspotKind==='observed';
+  for(const s of (P.hotspots||[])){const q=regionPx(s.lat,s.lon);if(!q||q[0]<-10||q[1]<-10||q[0]>CW+10||q[1]>CH+10)continue;s._px=q;
+    ctx.fillStyle=obs?'rgba(77,208,225,0.22)':'rgba(179,157,219,0.22)';ctx.beginPath();ctx.arc(q[0],q[1],6.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=obs?'#4dd0e1':'#b39ddb';ctx.strokeStyle='#0a1218';ctx.lineWidth=1;ctx.beginPath();ctx.arc(q[0],q[1],3.2,0,Math.PI*2);ctx.fill();ctx.stroke();}
+}
+$('rFit').onclick=()=>fitRegion();
+$('wrap').addEventListener('mousemove',e=>{
+  const tip=$('rtip');if(MODE!=='region'||!proj||!RZ||e.target.closest('.panel')){tip.classList.add('hide');return;}
+  const rc=$('wrap').getBoundingClientRect(),x=e.clientX-rc.left,y=e.clientY-rc.top;let html='';
+  const obs=P.hotspotKind==='observed';
+  for(const s of (P.hotspots||[]))if(s._px&&Math.hypot(s._px[0]-x,s._px[1]-y)<8){
+    html=`<b>${obs?'NASA FIRMS observed hotspot':'Demo hotspot (synthetic)'}</b><br>${s.date||''}`+(s.sat?` · ${s.sat}`:'')+
+      (s.conf?`<br>Confidence: ${s.conf}`:'')+(s.frp!=null?` · FRP ${s.frp} MW`:'')+`<br>${s.lat.toFixed(4)}°, ${s.lon.toFixed(4)}°`;break;}
+  if(!html){const ll=proj.fromContainerPixelToLatLng(new google.maps.Point(x,y));
+    if(ll){const i=RZ.idx.get(Math.round((ll.lat()-RZ.lat0)/RZ.res)+','+Math.round((ll.lng()-RZ.lon0)/RZ.res));
+      if(i!=null)html=`<b>${RZ.ids[i]}</b> · ${SEV_NAME[RZ.sev[i]]||'LOW'}<br>Risk ${(RZ.risk[i]*100).toFixed(0)}% (model prediction)`+
+        (RZ.fwi[i]!=null?`<br>FWI ${(+RZ.fwi[i]).toFixed(1)}`:'')+(RZ.act[i]?'<br>Active fire nearby':'');}}
+  if(!html){tip.classList.add('hide');return;}
+  tip.innerHTML=html;tip.classList.remove('hide');
+  tip.style.left=Math.min(x+14,CW-tip.offsetWidth-6)+'px';tip.style.top=Math.min(y+14,CH-tip.offsetHeight-6)+'px';
+});
+$('wrap').addEventListener('mouseleave',()=>$('rtip').classList.add('hide'));
+
 // ── apply a payload from Python (first load or rerun with new arguments) ────
 let BY_OUT=[];
 function applyPayload(p){
+  if(p.mode==='region'){applyRegion(p);return;}
   const focusMoved=!P||Math.abs(P.focus.lat-p.focus.lat)>1e-7||Math.abs(P.focus.lon-p.focus.lon)>1e-7;
   const sizeChanged=!P||P.focus.width_m!==p.focus.width_m||P.focus.height_m!==p.focus.height_m||P.focus.cell_m!==p.focus.cell_m;
   const firstLoad=!P;P=p;MODE=p.mode;UID=p.uid;
@@ -922,8 +1049,12 @@ function syncMapObjects(boundsChanged){
   focusRect.setVisible(show.boundary);
   hotCircles.forEach(c=>c.setMap(null));hotCircles=[];
   const obs=P.hotspotKind==='observed';
-  (P.hotspots||[]).forEach(h=>hotCircles.push(new google.maps.Circle({map,center:{lat:h.lat,lng:h.lon},radius:187.5,
-    strokeColor:obs?'#4dd0e1':'#b39ddb',strokeOpacity:0.95,strokeWeight:2,fillColor:obs?'#4dd0e1':'#b39ddb',fillOpacity:0.08,clickable:false,zIndex:15})));
+  (P.hotspots||[]).forEach(h=>{const c=new google.maps.Circle({map,center:{lat:h.lat,lng:h.lon},radius:187.5,
+    strokeColor:obs?'#4dd0e1':'#b39ddb',strokeOpacity:0.95,strokeWeight:2,fillColor:obs?'#4dd0e1':'#b39ddb',fillOpacity:0.1,clickable:true,zIndex:15});
+    if(c.addListener)c.addListener('click',e=>{if(picking){onMapClick(e);return;}
+      toast((obs?'NASA FIRMS observed hotspot (375 m VIIRS pixel)':'Demo hotspot (synthetic, not observed)')+(h.date?' · '+h.date:'')+(h.sat?' · '+h.sat:'')+
+        (h.conf?' · confidence '+h.conf:'')+(h.frp!=null?' · FRP '+h.frp+' MW':''),6000);});
+    hotCircles.push(c);});
 }
 let expectFocus=null;           // focus we just emitted from a drag: don't fly the camera when it comes back
 function commitRect(){
@@ -951,7 +1082,7 @@ function onMapClick(e){
   const wrap=$('wrap');let drag=null,moved=false;
   const isOrbit=e=>(e.ctrlKey||e.metaKey)&&e.button===0;
   wrap.addEventListener('pointerdown',e=>{
-    if(!map||!isOrbit(e)||e.target.closest('.panel'))return;
+    if(!map||MODE==='region'||!isOrbit(e)||e.target.closest('.panel'))return;
     e.preventDefault();e.stopPropagation();
     drag={x:e.clientX,y:e.clientY,h:map.getHeading()||0,t:map.getTilt()||0,id:e.pointerId};moved=false;
     wrap.classList.add('orbit');if(!IS_VECTOR)toast(NO3D,6000);
@@ -1026,9 +1157,13 @@ async function initMap(){
       }};
     map.addListener('renderingtype_changed',setupGL);setupGL();
     map.addListener('bounds_changed',()=>{mapIdle=false;});map.addListener('idle',()=>{mapIdle=true;if(GLOV)GLOV.requestRedraw();});
-    gmReady=true;syncMapObjects(true);
-    google.maps.event.addListenerOnce(map,'idle',()=>{setTimeout(()=>{camSim(2200);if(P.autoplay&&P.hasRun)setTimeout(()=>setPlaying(true),2400);},300);});
-  }catch(e){showErr('<div><b>Google Maps could not load.</b><br>'+String(e&&e.message||e)+'</div>');console.error(e);}
+    map.addListener('bounds_changed',()=>{RDIRTY=true;});
+    gmReady=true;if(MODE==='region')syncRegionObjects();else syncMapObjects(true);
+    google.maps.event.addListenerOnce(map,'idle',()=>{
+      setTimeout(()=>reportMapStatus({ok:true,vector:IS_VECTOR}),600);
+      if(MODE==='region'){fitRegion();return;}
+      setTimeout(()=>{camSim(2200);if(P.autoplay&&P.hasRun)setTimeout(()=>setPlaying(true),2400);},300);});
+  }catch(e){reportMapStatus({ok:false,error:'Google Maps could not load: '+String(e&&e.message||e).slice(0,160)});showErr('<div><b>Google Maps could not load.</b><br>'+String(e&&e.message||e)+'</div>');console.error(e);}
 }
 
 // ── Streamlit render messages ──────────────────────────────────────────────

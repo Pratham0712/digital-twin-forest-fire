@@ -23,11 +23,11 @@ import streamlit as st
 
 from src.dashboard.dashboard_common import (
     set_page, build_sidebar, ensure_twin, render_kpi_row,
-    render_risk_map, render_risk_gauge, render_alerts,
+    render_risk_gauge, render_alerts,
     render_autorefresh_status,
 )
 from src.dashboard.ui.command_center import (
-    render_dashboard_hero, render_explore_cards, render_fire_alert_panel, render_status_strip,
+    render_dashboard_hero, render_explore_cards, render_fire_alert_panel, render_region_map, render_status_strip,
     render_system_status,
 )
 from src.auth.auth_gate import require_login, render_user_badge_in_sidebar, is_admin
@@ -73,13 +73,19 @@ render_explore_cards(nav_items)
 
 col_map, col_side = st.columns([3, 1], gap="medium")
 with col_map:
-    render_risk_map(snap.processed_grid, snap.risk_scores, twin.region)
+    render_region_map(twin)
 with col_side:
     render_risk_gauge(summary)
     render_alerts(snap.alerts, summary, limit=8)
 
 st.markdown('<div class="sec-hdr">Data &amp; system status</div>', unsafe_allow_html=True)
 render_system_status(twin, summary, offline)
+if not offline:
+    if st.button("Refresh satellite & weather data", key="cc_refresh_live",
+                 help="Fetch NASA FIRMS detections and OpenWeatherMap weather for this region now "
+                      "(otherwise refreshed automatically at the interval shown above)."):
+        ensure_twin(offline, scenario, region, force_refresh=True, trigger="Manual refresh (NASA FIRMS + OpenWeatherMap)")
+        st.rerun()
 st.markdown("<br/>", unsafe_allow_html=True)
 st.caption(
     "Digital Twin Framework for Forest Fire Prediction · BMSCE ISE · Batch 42 · "

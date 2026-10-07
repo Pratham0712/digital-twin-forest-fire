@@ -238,6 +238,24 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, input:focus-v
     white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
 [class*="st-key-cc_explore_"] [data-testid="stPageLink"] a:hover p { color: #FFFFFF !important; }
 
+/* ── Command Center regional map (Google satellite in the fire_map component) ── */
+.st-key-cc_regionmap iframe { border-radius: 16px; box-shadow: 0 0 0 1px rgba(77,163,255,0.16), 0 0 26px rgba(155,123,255,0.08),
+    0 14px 34px rgba(0,0,0,0.45); }
+
+/* ── real observations at the selected location ── */
+.lv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 6px 0 8px 0; }
+.lv-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; }
+.lv-card.scn { border-style: dashed; }
+.lv-card .l { display: flex; align-items: center; gap: 8px; font: 700 10.5px/1.2 var(--mono); letter-spacing: .12em; color: var(--muted); }
+.lv-card .tag { margin-left: auto; font: 700 9.5px/1 var(--mono); letter-spacing: .1em; padding: 3px 6px; border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.16); color: #E8EDF3; }
+.lv-card .tag.live { color: var(--ok); border-color: rgba(53,208,127,.45); }
+.lv-card .tag.warn { color: var(--warn); border-color: rgba(251,191,36,.45); }
+.lv-card .tag.crit { color: #FF8A80; border-color: rgba(255,59,59,.45); }
+.lv-card .g2 { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin-top: 8px; font-size: 12.5px; }
+.lv-card .g2 span:nth-child(odd) { color: var(--muted); } .lv-card .g2 span:nth-child(even) { color: #E8EDF3; font-weight: 600; }
+.lv-card .ft { margin-top: 7px; font-size: 11px; color: #7C8797; line-height: 1.45; }
+
 /* ── data / system status ── */
 .sys-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-top: 6px; }
 .sys-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; }
