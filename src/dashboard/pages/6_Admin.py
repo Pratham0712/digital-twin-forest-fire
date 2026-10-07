@@ -62,13 +62,23 @@ def _alerts(limit: int):
     return db.get_recent_alerts(limit=limit)
 
 
+def _ist_table(rows) -> pd.DataFrame:
+    """Stored rows for display: every *_utc column shown in IST (the database keeps UTC)."""
+    from src.utils.timezone import format_ist_series
+    df = pd.DataFrame(rows)
+    for c in [c for c in df.columns if c.endswith("_utc")]:
+        df[c] = format_ist_series(df[c])
+        df = df.rename(columns={c: c[:-4] + " (IST)"})
+    return df
+
+
 tab_users, tab_history, tab_notify = st.tabs(["Users", "Stored history", "Notifications"])
 
 with tab_users:
     st.subheader("Accounts")
     users = _users()
     if users:
-        st.dataframe(pd.DataFrame(users)[["username", "role", "created_utc"]],
+        st.dataframe(_ist_table(users)[["username", "role", "created (IST)"]],
                       use_container_width=True, hide_index=True)
     else:
         st.info("No users yet.")
@@ -126,7 +136,7 @@ with tab_history:
     st.subheader("Recent refresh snapshots")
     snaps = _snapshots(30)
     if snaps:
-        st.dataframe(pd.DataFrame(snaps), use_container_width=True, hide_index=True)
+        st.dataframe(_ist_table(snaps), use_container_width=True, hide_index=True)
     else:
         st.info("No snapshots recorded yet - they're written automatically every time "
                 "the dashboard (or the background scheduler) refreshes the twin.")
@@ -134,7 +144,7 @@ with tab_history:
     st.subheader("Recent alerts")
     alerts = _alerts(100)
     if alerts:
-        st.dataframe(pd.DataFrame(alerts), use_container_width=True, hide_index=True)
+        st.dataframe(_ist_table(alerts), use_container_width=True, hide_index=True)
     else:
         st.info("No alerts recorded yet.")
 

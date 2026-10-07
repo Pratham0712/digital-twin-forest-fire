@@ -36,6 +36,7 @@ from src.dashboard.dashboard_common import _compass_direction_name, log_action
 from src.dashboard.geo_fire_map import (duration_label, hotspots_near, missing_key_card, new_event,
                                         render_fire_map, setup_payload, sim_payload)
 from src.dashboard.ui.live_panel import live_observations, map_hotspots, render_live_conditions
+from src.utils.timezone import format_ist
 from src.simulation.fuel_map import CLASS_NAMES, FUEL, domain_land_cover
 from src.simulation.local_spread import (DEFAULT_FOCUS, FOCUS_AREAS, HIGHEST_RISK_FOCUS, PLACEMENTS,
                                          FocusArea, domain_elevation, domain_for, focus_options_for_region,
@@ -458,7 +459,7 @@ def apply_and_open_spread(twin, scenario: dict, setup: dict, live: Optional[dict
 # ── Spread side ───────────────────────────────────────────────────────────── #
 
 def render_applied_scenario_bar(cfg: dict):
-    ts = cfg.get("timestamp", "")[:19].replace("T", " ")
+    ts = format_ist(cfg.get("timestamp"))
     risk = cfg.get("risk", {})
     loc = cfg.get("selected_location", {})
     live = cfg.get("live")
@@ -491,12 +492,12 @@ def render_applied_scenario_bar(cfg: dict):
         w = live.get("weather", {})
         kind = ("LIVE WEATHER (real OpenWeatherMap observation)" if live["mode"] == "live"
                 else "WHAT-IF SCENARIO INPUT on a real OpenWeatherMap baseline")
-        st.caption(f"Mode: {MODE_NAMES.get(live['mode'], live['mode'])} · applied {ts} UTC · {src} · "
+        st.caption(f"Mode: {MODE_NAMES.get(live['mode'], live['mode'])} · applied {ts} · {src} · "
                    f"{cfg.get('latitude'):.4f}°N, {cfg.get('longitude'):.4f}°E · {cfg.get('region')} zone "
                    f"{risk.get('zone_id')} ({risk.get('zone_severity')}) · {kind} · weather "
                    f"{str(w.get('status', '-')).upper()}")
     else:
-        st.caption(f"Scenario input applied {ts} UTC · {src} · {cfg.get('latitude'):.4f}°N, {cfg.get('longitude'):.4f}°E · "
+        st.caption(f"Scenario input applied {ts} · {src} · {cfg.get('latitude'):.4f}°N, {cfg.get('longitude'):.4f}°E · "
                    f"{cfg.get('region')} zone {risk.get('zone_id')} ({risk.get('zone_severity')}) · synthetic scenario weather")
 
 
@@ -655,8 +656,8 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
                                                               {"status": live["firms"]["status"],
                                                                "n_in_area": cls["n_in_area"]}, plan["ign"]))
         st.caption(f"Observations as handed off from the What-If Simulator (weather fetched "
-                   f"{str(live['weather'].get('fetched_utc') or '-')[:16].replace('T', ' ')} UTC, FIRMS fetched "
-                   f"{str(live['firms'].get('fetched_utc') or '-')[:16].replace('T', ' ')} UTC). Use "
+                   f"{format_ist(live['weather'].get('fetched_utc'))}, FIRMS fetched "
+                   f"{format_ist(live['firms'].get('fetched_utc'))}). Use "
                    "Refresh live data in the What-If Simulator for newer observations.")
     else:
         render_live_conditions(f.lat, f.lon, loc.get("name", ""), kp, demo, scenario=scenario, data=live_data)
@@ -822,7 +823,7 @@ def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: 
         from src.dashboard.live_modes import MODE_NAMES
 
         def _ts(v):
-            return (str(v)[:16].replace("T", " ") + " UTC") if v else "-"
+            return format_ist(v)
         wv, fv, ign = live["weather"], live["firms"], plan["ign"]
         cls = plan["cls"]
         b = (live.get("baseline") or {})

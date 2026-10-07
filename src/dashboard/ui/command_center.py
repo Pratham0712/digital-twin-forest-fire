@@ -8,6 +8,8 @@ scenario) or the model's highest-risk zone (labelled MODEL PREDICTION and
 DEMO DATA / LIVE DATA); it never claims an observed fire it does not have.
 """
 import html
+
+from src.utils.timezone import format_ist
 import os
 
 import streamlit as st
@@ -243,7 +245,7 @@ def render_system_status(twin, summary: dict, offline: bool):
         db_txt += " · local SQLite fallback (cloud database unreachable)"
     firms_extra = []
     if fs.get("fetched_utc"):
-        firms_extra.append(f"fetched {str(fs['fetched_utc'])[:16].replace('T', ' ')} UTC")
+        firms_extra.append(f"fetched {format_ist(fs['fetched_utc'])}")
     if fs.get("error") and feeds["firms_mode"] in ("error", "cached"):
         firms_extra.append(f"reason: {str(fs['error'])[:120]}")
     w_extra = []
@@ -261,7 +263,7 @@ def render_system_status(twin, summary: dict, offline: bool):
     w_extra.insert(0, f"key configured: {yn(keys['OWM_API_KEY'])}")
     m_txt = f"key configured: {yn(keys['GOOGLE_MAPS_API_KEY'])} · {m_txt}"
     from src.dashboard.dashboard_common import model_status_text
-    ts = (summary.get("timestamp") or "")[:19].replace("T", " ")
+    ts = format_ist(summary.get("timestamp"))
     rows = [
         (_dot(feeds["firms_mode"]), "NASA FIRMS · SATELLITE FIRE DETECTIONS",
          " · ".join([feed_text("firms", feeds)] + firms_extra)),
@@ -269,7 +271,7 @@ def render_system_status(twin, summary: dict, offline: bool):
          " · ".join([feed_text("weather", feeds)] + w_extra)),
         (m_cls, "GOOGLE MAPS · SATELLITE", m_txt[0].upper() + m_txt[1:]),
         ("ok", "RISK MODEL · XGBOOST", f"Loaded · {model_status_text(twin.region)} · "
-                                       f"{summary.get('total_zones', 0)} zones scored {ts} UTC (model prediction)"),
+                                       f"{summary.get('total_zones', 0)} zones scored {ts} (model prediction)"),
         (db_cls, "DATABASE", db_txt),
     ]
     rows.insert(0, ("warn" if feeds["demo"] else "data", "MODE",

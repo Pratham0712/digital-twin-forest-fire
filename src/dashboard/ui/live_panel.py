@@ -18,15 +18,15 @@ import streamlit as st
 
 from src.data_ingestion.live_point import FIRMS_BOX_KM, FIRMS_DAYS, area_hotspots, hotspot_markers, point_weather
 from src.dashboard.ui.global_ticker import compass
+from src.utils.timezone import format_ist, localize_text
 
 _TAG = {"live": ("live", "LIVE"), "cached": ("warn", "CACHED"), "error": ("crit", "UNAVAILABLE"),
         "not_configured": ("warn", "NOT CONFIGURED"), "demo": ("warn", "DEMO / OFFLINE")}
 
 
 def _utc(iso) -> str:
-    if not iso:
-        return "-"
-    return str(iso)[:16].replace("T", " ").replace("+00:00", "").rstrip("Z") + " UTC"
+    """A UTC timestamp from the data layer, displayed in IST (src/utils/timezone)."""
+    return format_ist(iso)
 
 
 def _card(title: str, mode: str, rows, foot: str, cls: str = "") -> str:
@@ -114,7 +114,7 @@ def render_live_conditions(lat: float, lon: float, place: str, kp: str, offline:
         if ws.get("mode") == "cached":
             foot += f" · CACHED: the latest request failed ({ws.get('error')})"
     else:
-        rows = [("Status", "OPENWEATHERMAP UNAVAILABLE" if ws.get("mode") == "error" else ws.get("label", "-"))]
+        rows = [("Status", "OPENWEATHERMAP UNAVAILABLE" if ws.get("mode") == "error" else localize_text(ws.get("label", "-")))]
         foot = (ws.get("error") or "") if ws.get("mode") == "error" else (
             "Real weather is shown here when OWM_API_KEY is set and the request succeeds. Nothing is estimated.")
     cards.append(_card("REAL WEATHER · OPENWEATHERMAP", ws.get("mode", "error"), rows, foot))
@@ -135,7 +135,7 @@ def render_live_conditions(lat: float, lon: float, place: str, kp: str, offline:
         if fs.get("mode") == "cached":
             foot += f" CACHED: the latest request failed ({fs.get('error')})."
     else:
-        rows = [("Status", "NASA FIRMS UNAVAILABLE" if fs.get("mode") == "error" else fs.get("label", "-"))]
+        rows = [("Status", "NASA FIRMS UNAVAILABLE" if fs.get("mode") == "error" else localize_text(fs.get("label", "-")))]
         foot = ((fs.get("error") or "") + " No detections are invented.") if fs.get("mode") == "error" \
             else "No detections are invented."
     cards.append(_card("NASA FIRMS · SATELLITE FIRE DETECTIONS", fs.get("mode", "error"), rows, foot))

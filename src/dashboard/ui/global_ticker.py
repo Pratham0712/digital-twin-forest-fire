@@ -121,7 +121,9 @@ def data_badge(feeds: dict) -> Tuple[str, str]:
 
 
 def _utc(iso: Optional[str]) -> str:
-    return (iso or "")[:16].replace("T", " ").replace("+00:00", "").rstrip("Z") + (" UTC" if iso else "")
+    """A UTC timestamp from the data layer, displayed in IST (src/utils/timezone)."""
+    from src.utils.timezone import format_ist
+    return format_ist(iso, "dot", missing="")
 
 
 def feed_text(kind: str, feeds: dict) -> str:
@@ -186,9 +188,9 @@ def ticker_items(twin=None) -> Tuple[dict, List[Tuple[str, str, str]]]:
                                           + {"live": "", "cached": " · cached"}.get(feeds["weather_mode"], " · demo")))
         else:
             items.append(("warn", "WIND", "no real weather available (none invented)"))
-        ts = (summary.get("timestamp") or "")[:16].replace("T", " ")
+        ts = _utc(summary.get("timestamp"))
         if ts:
-            items.append(("data", "LAST REFRESH", f"{ts} UTC"))
+            items.append(("data", "LAST REFRESH", ts))
     spread = latest_spread()
     if spread is not None:
         src, res = spread

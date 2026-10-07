@@ -21,6 +21,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.utils.timezone import utc_to_ist
 from src.dashboard.dashboard_common import (
     set_page, build_sidebar, ensure_twin, render_header, render_wind_compass,
     SEV_COLOR, SYSTEM, DATA_RAW_DIR, log_action,
@@ -211,7 +212,7 @@ if mode == "Single zone":
     render_briefing_card(data)
 
     st.download_button("Download as text", briefing_data_to_text(data),
-                        file_name=f"briefing_{chosen}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.txt",
+                        file_name=f"briefing_{chosen}_{utc_to_ist(datetime.now(timezone.utc)).strftime('%Y%m%d_%H%M')}_IST.txt",
                         on_click=log_action, args=("report", f"Downloaded briefing for {chosen} "
                                                    f"({severity}, risk {risk:.0%})", twin.region.name))
 
@@ -231,6 +232,6 @@ else:
         if len(extreme_zones) > 25:
             st.caption(f"+ {len(extreme_zones) - 25} more EXTREME zones not shown (batch limit 25)")
         st.download_button("Download full batch report", "\n\n".join(full_report),
-                            file_name=f"batch_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.txt",
+                            file_name=f"batch_report_{utc_to_ist(datetime.now(timezone.utc)).strftime('%Y%m%d_%H%M')}_IST.txt",
                             on_click=log_action, args=("report", f"Downloaded batch report "
                                                        f"({len(extreme_zones)} EXTREME zones)", twin.region.name))

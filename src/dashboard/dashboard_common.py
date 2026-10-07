@@ -702,13 +702,14 @@ def render_header(summary: dict, offline: bool, subtitle: str = None, region=Non
         from src.dashboard.ui.global_ticker import data_badge, feed_status
         cls, badge_txt = data_badge(feed_status(st.session_state.get("twin")))
         badge_cls = "badge-live" if cls == "live" else "badge-demo"
-    ts = summary.get("timestamp", "")[:19].replace("T", " ")
+    from src.utils.timezone import format_ist
+    ts = format_ist(summary.get("timestamp"))
     title = subtitle or "Forest Fire Digital Twin"
     st.markdown(f"""
     <div class="hero">
       <div class="eyebrow">Forest Fire Digital Twin</div>
       <h1>{title}<span class="badge {badge_cls}">{badge_txt}</span></h1>
-      <div class="sub">{region.name} &nbsp;·&nbsp; Last refreshed {ts} UTC
+      <div class="sub">{region.name} &nbsp;·&nbsp; Last refreshed {ts}
         &nbsp;·&nbsp; BMS College of Engineering · ISE Batch 42</div>
     </div>
     """, unsafe_allow_html=True)

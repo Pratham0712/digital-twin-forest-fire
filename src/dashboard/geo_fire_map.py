@@ -114,7 +114,7 @@ def setup_payload(focus: FocusArea, duration_minutes: float, wind_speed_ms: floa
          "placement": placement, "preview": preview, "ignitionKind": ignition_kind, "ignitionLabel": ignition_label,
          "ignitionPoints": picks,
          "wind": [[round(float(wind_speed_ms), 2), round(float(wind_from_deg) % 360, 1)]],
-         "metrics": [], "layers": layers, "hotspots": hotspots or [], "hotspotKind": hotspot_kind,
+         "metrics": [], "layers": layers, "hotspots": _display_hotspots(hotspots), "hotspotKind": hotspot_kind,
          "hotspotSummary": hotspot_summary}
     p["uid"] = _uid(p)
     return p
@@ -135,7 +135,7 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
     p = {"mode": "sim", **_pick_rules(max_picks, nonfuel_cells), "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
          "focus": f, "domain": d, "editable": False, "search": False,
          "durationMin": float(duration_minutes), "durationLabel": duration_label(duration_minutes),
-         "hotspots": hotspots, "hotspotKind": hotspot_kind, "hotspotSummary": hotspot_summary,
+         "hotspots": _display_hotspots(hotspots), "hotspotKind": hotspot_kind, "hotspotSummary": hotspot_summary,
          "layers": layers, "autoplay": bool(autoplay), "ignitionKind": ignition_kind, "ignitionLabel": ignition_label,
          "placement": placement, "ignitionPoints": picks}
     if result is None:
@@ -162,6 +162,14 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
         })
     p["uid"] = _uid(p)
     return p
+
+
+def _display_hotspots(hotspots: Optional[List[dict]]) -> List[dict]:
+    """Copies of the detection markers with their observation time shown in IST
+    (the data layer's UTC value is not modified)."""
+    from src.utils.timezone import format_ist
+    return [{**h, "date": format_ist(h["date"], "dot", missing=str(h["date"]))} if h.get("date") else dict(h)
+            for h in (hotspots or [])]
 
 
 def _pick_rules(max_picks: Optional[int], nonfuel_cells: Optional[List[int]]) -> dict:
@@ -233,7 +241,7 @@ def region_payload(twin, hotspots: List[dict], hotspot_kind: str, hotspot_summar
                    "risk": np.round(risk, 3).tolist(), "sev": sev,
                    "fwi": [None if not np.isfinite(v) else round(float(v), 1) for v in fwi],
                    "act": [int(v) for v in act], "ids": g["zone_id"].astype(str).tolist()},
-         "hotspots": hotspots, "hotspotKind": hotspot_kind, "hotspotSummary": hotspot_summary,
+         "hotspots": _display_hotspots(hotspots), "hotspotKind": hotspot_kind, "hotspotSummary": hotspot_summary,
          "sourceNote": source_note, "timestamp": str(snap.timestamp)}
     p["uid"] = _uid(p)
     return p

@@ -36,7 +36,7 @@ EVENT_LABELS = {
     "admin": "Admin",
     "error": "Error",
 }
-LOCAL_TZ = "Asia/Kolkata"
+from src.utils.timezone import IST as LOCAL_TZ, format_ist_series  # noqa: E402 - one shared converter
 
 st.markdown("""
 <div class="hero">
@@ -96,7 +96,7 @@ def live_feed():
         return
 
     df = pd.DataFrame(rows)
-    df["Time"] = _to_local(df["timestamp_utc"]).dt.strftime("%d %b %Y, %H:%M:%S")
+    df["Time"] = format_ist_series(df["timestamp_utc"], "seconds")
     df["Event"] = df["event_type"].map(lambda e: EVENT_LABELS.get(e, e))
     df["User"] = df["actor"]
     df["Region"] = df["region_name"].fillna("—")

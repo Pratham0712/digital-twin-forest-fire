@@ -32,6 +32,7 @@ import pandas as pd
 import streamlit as st
 
 from src.dashboard.ui.global_ticker import compass
+from src.utils.timezone import format_ist
 
 LIVE, WHATIF, DEMO = "live", "whatif", "demo"
 MODE_KEY = "wi_sim_mode"
@@ -494,7 +495,7 @@ def render_live_controls(mode: str, obs: Optional[dict]) -> dict:
             st.session_state[BASE_KEY] = baseline = obs
             if edited:
                 updated_note = (f"Baseline updated to the latest real observation (fetched "
-                                f"{str(obs.get('fetched_utc') or '-')[:16].replace('T', ' ')} UTC). Your WHAT-IF "
+                                f"{format_ist(obs.get('fetched_utc'))}). Your WHAT-IF "
                                 f"scenario was kept and now differs from the latest baseline.")
             else:
                 _set_sliders({k: (v if v is not None else current.get(k)) for k, v in (obs.get("values") or {}).items()})
@@ -545,13 +546,13 @@ def render_live_controls(mode: str, obs: Optional[dict]) -> dict:
 def _render_comparison(rows: list, baseline: Optional[dict]):
     if not baseline:
         return
-    ts = str(baseline.get("fetched_utc") or "")[:16].replace("T", " ")
+    ts = format_ist(baseline.get("fetched_utc"))
     body = "".join(
         f"<tr class='{'chg' if r['changed'] else ''}'><td>{html.escape(r['label'])}</td>"
         f"<td>{html.escape(_fmt(r['baseline'], r['unit'], r['dec']))}</td>"
         f"<td>{html.escape(_fmt(r['scenario'], r['unit'], r['dec']))}</td>"
         f"<td>{html.escape(r['text'].split('Change: ')[1])}</td></tr>" for r in rows)
-    st.markdown(f"<table class='lm-cmp'><tr><th></th><th>REAL BASELINE<br><small>OpenWeatherMap · fetched {ts} UTC"
+    st.markdown(f"<table class='lm-cmp'><tr><th></th><th>REAL BASELINE<br><small>OpenWeatherMap · fetched {ts}"
                 f"</small></th><th>WHAT-IF SCENARIO<br><small>SCENARIO INPUT</small></th><th>Change</th></tr>"
                 f"{body}</table>", unsafe_allow_html=True)
 
