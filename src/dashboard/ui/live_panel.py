@@ -152,7 +152,7 @@ def render_live_conditions(lat: float, lon: float, place: str, kp: str, offline:
         rows = [("Temperature", f"{scenario.get('temp_c')} °C"), ("Humidity", f"{scenario.get('humidity_pct')} %"),
                 ("Wind", f"{float(scenario.get('wind_speed_ms', 0)):.1f} m/s from "
                          f"{compass(float(scenario.get('wind_from_deg', 225)))} ({float(scenario.get('wind_from_deg', 225)):.0f}°)"),
-                ("Seeded hotspots", f"{scenario.get('n_hotspots', '-')} (synthetic)")]
+                ("Hypothetical hotspots", f"{scenario.get('n_hotspots', '-')} (scenario input, not observed)")]
         cards.append(_card("WHAT-IF SCENARIO", "", rows,
                            "Hypothetical values chosen by you. They drive the simulation; they are not observations.",
                            cls="scn"))

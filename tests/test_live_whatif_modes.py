@@ -264,8 +264,11 @@ def test_10_high_risk_and_zero_firms_message():
                               "No observed fire spread simulated.")
     post = lm.result_status(lm.LIVE, "live", cls, "HIGH", ign, ran=False)
     assert post["title"] == "HIGH FIRE-WEATHER RISK — NO ACTIVE FIRE"
-    assert post["message"] == ("Fire-weather risk is HIGH, but no active satellite fire detection was found. The system "
-                               "does not simulate an existing fire without an ignition source.")
+    assert post["message"] == ("Current weather conditions indicate elevated fire potential, but NASA FIRMS returned no "
+                               "active fire detection. No observed fire spread was simulated.")
+    assert ("Fire-weather risk is HIGH, but no active satellite fire detection was found. The system does not simulate "
+            "an existing fire without an ignition source.") in post["notes"]
+    assert "Current fire-weather conditions: HIGH." in post["notes"]
 
 
 # ── 11-20  LIVE DATA -> WHAT-IF ──────────────────────────────────────────── #
@@ -416,13 +419,10 @@ def test_25_refresh_never_overwrites_a_modified_whatif(live):
     at.feed["weather"] = _weather(temperature_c=30.0)
     _refresh(at)
     assert _slider(at, "temp_c").value == pytest.approx(35.0)                          # user's value kept
-    assert at.session_state[lm.BASE_KEY]["values"]["temp_c"] == 22.73                 # until confirmed
-    assert any("New live weather available. Update baseline?" in i.value for i in at.info)
-    _button(at, "Update baseline").click().run()
-    assert not at.exception
-    assert at.session_state[lm.BASE_KEY]["values"]["temp_c"] == 30.0
-    assert _slider(at, "temp_c").value == pytest.approx(35.0)                          # still the scenario value
+    assert at.session_state[lm.BASE_KEY]["values"]["temp_c"] == 30.0                  # baseline follows the refresh
+    assert any("Your WHAT-IF scenario was kept and now differs from the latest baseline" in i.value for i in at.info)
     assert "Temperature — Baseline: 30.0°C / Scenario: 35.0°C / Change: +5.0°C" in [c.value for c in at.caption]
+    assert at.session_state["_wi_twin"].ingestion.scenario["point_weather"]["temperature_c"] == 35.0
 
 
 def test_26_handoff_preserves_mode_weather_firms_ignition_location_duration(live):

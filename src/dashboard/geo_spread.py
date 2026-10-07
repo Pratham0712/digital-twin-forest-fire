@@ -401,7 +401,7 @@ def render_applied_scenario_bar(cfg: dict):
         last = ("FIRMS detections", f"{fc.get('n', 0)} ({live.get('classification', {}).get('n_valid', 0)} ignition)"
                 if fc.get("status") in ("live", "cached") else "UNAVAILABLE")
     else:
-        last = ("Seeded hotspots", cfg.get("n_hotspots"))
+        last = ("Hypothetical hotspots", f"{cfg.get('n_hotspots')} (scenario)")
     st.markdown(f"""
     <div class="kpi-row">
       <div class="kpi"><div class="lbl">Location</div><div class="val" style="font-size:15px">{cfg.get('forest')}</div></div>
@@ -570,7 +570,9 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
                                                                   f"{cls['n_valid']}")],
                                scenario_card=lm.scenario_card(lmode, live.get("scenario_values") or {},
                                                               [{**r, "changed": r.get("changed")} for r in
-                                                               live.get("changes") or []], live.get("baseline")))
+                                                               live.get("changes") or []], live.get("baseline"),
+                                                              {"status": live["firms"]["status"],
+                                                               "n_in_area": cls["n_in_area"]}, plan["ign"]))
         st.caption(f"Observations as handed off from the What-If Simulator (weather fetched "
                    f"{str(live['weather'].get('fetched_utc') or '-')[:16].replace('T', ' ')} UTC, FIRMS fetched "
                    f"{str(live['firms'].get('fetched_utc') or '-')[:16].replace('T', ' ')} UTC). Use "

@@ -268,6 +268,9 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, input:focus-v
 .lm-lock { display: flex; gap: 8px; margin: 2px 0 8px 0; }
 .lm-tag { font: 700 10px/1 var(--mono); letter-spacing: .1em; padding: 4px 7px; border-radius: 5px; border: 1px solid rgba(255,255,255,.18); color: #E8EDF3; }
 .lm-tag.live { color: var(--ok); border-color: rgba(53,208,127,.45); }
+.lm-tag.whatif { color: var(--warn); border-color: rgba(251,191,36,.45); }
+.lm-ctag { margin: -6px 0 12px 0; font-size: 12px; color: #c9d2dd; display: flex; align-items: center; gap: 7px; }
+.lm-ref { color: #7C8797; }
 .lm-unavail { border: 1px dashed var(--border); border-radius: 10px; padding: 8px 11px; margin: 4px 0 10px 0; font-size: 12.5px; color: #FF8A80; }
 .lm-unavail b { color: #c9d2dd; font-weight: 600; }
 .lm-status { border: 1px solid; border-radius: 12px; padding: 11px 14px; margin: 8px 0; }

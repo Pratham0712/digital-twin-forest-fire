@@ -156,7 +156,9 @@ else:
                                detections=markers, refresh_all=True,
                                firms_rows=[("In simulation area", f"{cls['n_in_area']} · valid ignitions "
                                                                   f"{cls['n_valid']} ({cls['n_cells']} cell(s))")],
-                               scenario_card=lm.scenario_card(mode, ctl["values"], ctl["changes"], ctl["baseline"]))
+                               scenario_card=lm.scenario_card(mode, ctl["values"], ctl["changes"], ctl["baseline"],
+                                                              {"status": fs.get("mode"), "n_in_area": cls["n_in_area"]},
+                                                              plan["ign"]))
 
 blocked = bool(setup_error)
 if mode == lm.LIVE and ctl is not None and not ctl["complete"]:
@@ -183,7 +185,7 @@ snap = twin.current_snapshot
 summary = twin.get_summary()
 
 render_header(summary, True, "Scenario Result", region=twin.region,
-              badge={lm.LIVE: ("badge-live", "LIVE OBSERVATION"), lm.WHATIF: ("badge-demo", "WHAT-IF SCENARIO")}.get(mode))
+              badge={lm.LIVE: ("badge-live", "LIVE REAL-WORLD"), lm.WHATIF: ("badge-demo", "WHAT-IF / SIMULATED")}.get(mode))
 render_kpi_row(summary)
 
 # ── plain-language interpretation of the scenario ──

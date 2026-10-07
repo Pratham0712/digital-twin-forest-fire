@@ -159,7 +159,7 @@ def is_modified(baseline: Optional[dict], values: dict) -> bool:
 
 def newer_observation(saved: Optional[dict], obs: Optional[dict]) -> bool:
     """True when the latest observation differs from the WHAT-IF baseline (a
-    newer fetch, or the location moved): offer "Update baseline"."""
+    newer fetch, other values, or the location moved): it becomes the baseline."""
     if not obs:
         return False
     if not saved:
@@ -343,15 +343,21 @@ def result_status(mode: str, firms_status: str, cls: Optional[dict], severity: s
                  "was simulated and no detections were invented.")
         elif high:
             r = ("HIGH FIRE-WEATHER RISK — NO ACTIVE FIRE", "orange",
-                 f"Fire-weather risk is {sev}, but no active satellite fire detection was found. The system does not "
-                 "simulate an existing fire without an ignition source.")
+                 "Current weather conditions indicate elevated fire potential, but NASA FIRMS returned no active fire "
+                 "detection. No observed fire spread was simulated.")
+            notes.insert(0, f"Fire-weather risk is {sev}, but no active satellite fire detection was found. The system "
+                            "does not simulate an existing fire without an ignition source.")
         else:
             r = ("NO ACTIVE FIRE DETECTED", "green",
                  "NASA FIRMS returned no fire detections within the selected area/time window. No fire spread "
                  "was simulated.")
-        if not ran and (cls or {}).get("n_in_area") and not high:
-            r = (r[0], r[1], "No valid NASA FIRMS ignition inside the selected area (detections on non-fuel cells "
-                             "are not used). No fire spread was simulated.")
+            if (cls or {}).get("n_in_area"):
+                r = (r[0], r[1], "No valid NASA FIRMS ignition inside the selected area (detections on non-fuel "
+                                 "cells are not used). No fire spread was simulated.")
+        if not ran:
+            notes.insert(0, f"Current fire-weather conditions: {sev}.")
+            if firms_status in ("live", "cached"):
+                notes.insert(1, "No fire spread was simulated because no valid ignition source was detected.")
     else:
         if ran:
             r = ("WHAT-IF SIMULATION — HYPOTHETICAL IGNITION" if ign["source"] == "HYPOTHETICAL_USER"
@@ -368,12 +374,16 @@ def result_status(mode: str, firms_status: str, cls: Optional[dict], severity: s
     return {"title": r[0], "color": r[1], "message": r[2], "notes": notes, "ran": ran}
 
 
+ICONS = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴", "grey": "⚪", "blue": "🔵"}
+
+
 def status_html(s: dict, source_label: Optional[str] = None) -> str:
     c = COLORS.get(s["color"], COLORS["grey"])
+    icon = ICONS.get(s["color"], "")
     notes = "".join(f"<div class='lm-note'>{html.escape(n)}</div>" for n in s.get("notes") or [])
     src = f"<span class='lm-src'>{html.escape(source_label)}</span>" if source_label else ""
     return (f"<div class='lm-status' style='border-color:{c}66;background:{c}14'>"
-            f"<div class='lm-title' style='color:{c}'>{html.escape(s['title'])}{src}</div>"
+            f"<div class='lm-title' style='color:{c}'><span>{icon}</span>{html.escape(s['title'])}{src}</div>"
             f"<div class='lm-msg'>{html.escape(s['message'])}</div>{notes}</div>")
 
 
@@ -442,22 +452,32 @@ def render_live_controls(mode: str, obs: Optional[dict]) -> dict:
                 v = saved.get(k) if saved.get(k) is not None else (b if b is not None else SCENARIO_START[k])
                 st.session_state[f"{CTRL}_{k}"] = _round(k, v)
         baseline = st.session_state.get(BASE_KEY)
+        # A newer successful observation (refresh, cache expiry, new location) becomes the
+        # REAL BASELINE before the controls are drawn. The controls follow it only while
+        # the user has not edited them; edited WHAT-IF values are never overwritten. A
+        # failed request (obs None) never replaces the baseline.
+        updated_note = None
+        if obs is not None and newer_observation(baseline, obs):
+            current = {k: st.session_state.get(f"{CTRL}_{k}") for k, *_ in INPUTS}
+            if baseline:
+                edited = is_modified(baseline, scenario_values(current, baseline))
+            else:                                   # placeholders only: edited if moved off them
+                edited = any(_round(k, current.get(k)) != _round(k, SCENARIO_START[k]) for k, *_ in INPUTS)
+            st.session_state[BASE_KEY] = baseline = obs
+            if edited:
+                updated_note = (f"Baseline updated to the latest real observation (fetched "
+                                f"{str(obs.get('fetched_utc') or '-')[:16].replace('T', ' ')} UTC). Your WHAT-IF "
+                                f"scenario was kept and now differs from the latest baseline.")
+            else:
+                _set_sliders({k: (v if v is not None else current.get(k)) for k, v in (obs.get("values") or {}).items()})
+                st.session_state[SCN_KEY] = {k: st.session_state.get(f"{CTRL}_{k}") for k, *_ in INPUTS}
         if baseline:
             st.success("Baseline loaded from current real-world observations.")
+            if updated_note:
+                st.info(updated_note)
         else:
             st.warning("OPENWEATHERMAP UNAVAILABLE: no real baseline could be loaded. The values below are "
                        "SCENARIO INPUT only (not observations).")
-        if newer_observation(baseline, obs) and baseline:
-            n1, n2 = st.columns([3, 1])
-            n1.info("New live weather available. Update baseline? (Your WHAT-IF values are kept.)")
-            # handled in this run, before the controls are drawn (no rerun that would drop their state)
-            if n2.button("Update baseline", key=f"{CTRL}_upd_base", use_container_width=True):
-                was_modified = is_modified(baseline, scenario_values(
-                    {k: st.session_state.get(f"{CTRL}_{k}") for k, *_ in INPUTS}, baseline))
-                st.session_state[BASE_KEY] = baseline = obs
-                if not was_modified:               # nothing edited: the controls follow the new baseline
-                    _set_sliders((obs or {}).get("values") or {})
-                n1.success("Baseline updated to the latest real-world observation. Your WHAT-IF values were kept.")
 
     locked = mode == LIVE
     tag = "[LIVE]" if locked else "[SCENARIO INPUT]"
@@ -480,12 +500,16 @@ def render_live_controls(mode: str, obs: Optional[dict]) -> dict:
                                          if locked else "Hypothetical value (SCENARIO INPUT)."))
             if k == "wind_from_deg" and sliders[k] is not None:
                 st.caption(f"Wind from the {compass(sliders[k])} → pushes fire towards the {compass(sliders[k] + 180)}")
+            st.markdown(_control_tag(k, locked, sliders[k], base_vals.get(k), baseline), unsafe_allow_html=True)
     if not locked:
         st.session_state[SCN_KEY] = dict(sliders)
     values = dict(base_vals) if locked else scenario_values(sliders, baseline)
     rows = changes(baseline, values)
     if not locked:
         _render_comparison(rows, baseline)
+        for r in rows:
+            if r["changed"]:
+                st.caption(r["text"])
     return {"values": values, "baseline": baseline, "modified": any(r["changed"] for r in rows), "changes": rows,
             "complete": complete(values)}
 
@@ -502,9 +526,21 @@ def _render_comparison(rows: list, baseline: Optional[dict]):
     st.markdown(f"<table class='lm-cmp'><tr><th></th><th>REAL BASELINE<br><small>OpenWeatherMap · fetched {ts} UTC"
                 f"</small></th><th>WHAT-IF SCENARIO<br><small>SCENARIO INPUT</small></th><th>Change</th></tr>"
                 f"{body}</table>", unsafe_allow_html=True)
-    for r in rows:
-        if r["changed"]:
-            st.caption(r["text"])
+
+
+def _control_tag(key: str, locked: bool, slider_value, base_value, baseline: Optional[dict]) -> str:
+    """Per-control source tag: LIVE (locked), REAL BASELINE (WHAT-IF, unchanged) or
+    WHAT-IF (changed, with the baseline value next to it)."""
+    unit, dec = next((i[3], i[7]) for i in INPUTS if i[0] == key)
+    if locked:
+        return f"<div class='lm-ctag'><span class='lm-tag live'>LIVE</span> {html.escape(_fmt(base_value, unit, dec))}</div>"
+    eff = scenario_values({key: slider_value}, {"values": {key: base_value}}).get(key)
+    if baseline and base_value is not None and _round(key, eff) == _round(key, base_value):
+        return (f"<div class='lm-ctag'><span class='lm-tag live'>REAL BASELINE</span> "
+                f"{html.escape(_fmt(base_value, unit, dec))}</div>")
+    ref = f"baseline {_fmt(base_value, unit, dec)}" if (baseline and base_value is not None) else "no real baseline"
+    return (f"<div class='lm-ctag'><span class='lm-tag whatif'>WHAT-IF</span> {html.escape(_fmt(eff, unit, dec))}"
+            f" <span class='lm-ref'>({html.escape(ref)})</span></div>")
 
 
 # ── ignition plan shared by the What-If page and Spread Simulation ─────────── #
@@ -556,14 +592,24 @@ def live_handoff(mode: str, obs: Optional[dict], baseline: Optional[dict], value
     }
 
 
-def scenario_card(mode: str, values: dict, rows: list, baseline: Optional[dict]) -> dict:
-    """Third observation card: the inputs the simulation will use."""
+def scenario_card(mode: str, values: dict, rows: list, baseline: Optional[dict], firms: Optional[dict] = None,
+                  ign: Optional[dict] = None) -> dict:
+    """Third observation card: the inputs the simulation will use. firms:
+    {"status", "n_in_area"}; ign: live_modes.ignition_spec."""
     def v(k, unit, dec):
         x = values.get(k)
         return UNAVAILABLE if x is None else _fmt(x, unit, dec)
     wd = values.get("wind_from_deg")
     body = [("Temperature", v("temp_c", "°C", 1)), ("Humidity", v("humidity_pct", "%", 0)),
             ("Wind", (v("wind_speed_ms", "m/s", 1) + (f" from {compass(wd)} ({wd:.0f}°)" if wd is not None else "")))]
+    if firms is not None:
+        obs_fire = (f"{firms.get('n_in_area', 0)} (NASA FIRMS, in the area)"
+                    if firms.get("status") in ("live", "cached") else "UNAVAILABLE (none invented)")
+        body.append(("Observed fire detections", obs_fire))
+    if mode == WHATIF and ign is not None:
+        body.append(("Ignition", {"HYPOTHETICAL_USER": f"Hypothetical ignition(s) · {ign.get('placement') or '-'}",
+                                  "OBSERVED_FIRMS": "Observed NASA FIRMS ignition(s), retained",
+                                  "NONE": "None selected"}[ign["source"]]))
     if mode == LIVE:
         return {"title": "SIMULATION INPUT", "tag": "LIVE OBSERVATION", "rows": body,
                 "foot": "LIVE mode: the simulation uses the real observation unchanged (controls locked)."}
