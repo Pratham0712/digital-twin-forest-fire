@@ -692,10 +692,13 @@ def render_wind_compass(wind_from_deg: float, wind_speed_ms: float, label: str =
 
 # ── render: header ────────────────────────────────────────────────────────── #
 
-def render_header(summary: dict, offline: bool, subtitle: str = None, region=None):
+def render_header(summary: dict, offline: bool, subtitle: str = None, region=None, badge: tuple = None):
+    """badge=(css class, text) overrides the DEMO / feed badge (What-If live modes)."""
     region = region or REGION
     badge_cls, badge_txt = "badge-demo", "DEMO"
-    if not offline:
+    if badge:
+        badge_cls, badge_txt = badge
+    elif not offline:
         from src.dashboard.ui.global_ticker import data_badge, feed_status
         cls, badge_txt = data_badge(feed_status(st.session_state.get("twin")))
         badge_cls = "badge-live" if cls == "live" else "badge-demo"

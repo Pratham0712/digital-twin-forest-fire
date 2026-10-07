@@ -127,6 +127,8 @@ def apply_map_event(ev: dict, setup: dict, twin) -> bool:
     if kind == "ignite":
         pts = [[float(a), float(b)] for a, b in (ev.get("points") or [])][:10]
         setup["ignition_points"] = pts
+        if pts and setup.get("ignition_source") == "none":
+            setup["ignition_source"] = "hypothetical"           # clicked points are a user (HYPOTHETICAL) ignition
         setup["placement"] = "Map points" if pts else (PLACEMENTS[0] if setup["placement"] == "Map points"
                                                        else setup["placement"])
         return True
@@ -153,11 +155,18 @@ def _sync_widgets(setup: dict, kp: str):
         st.session_state[f"{kp}_dur"] = "Custom"
         st.session_state[f"{kp}_dur_c"] = int(d)
     st.session_state[f"{kp}_loc"] = setup["location"].get("preset", CUSTOM_LOCATION)
+    st.session_state[f"{kp}_igsrc"] = setup.get("ignition_source", "none")
 
 
-def render_setup_controls(twin, setup: dict, kp: str, show_location: bool = True) -> Optional[str]:
+def render_setup_controls(twin, setup: dict, kp: str, show_location: bool = True,
+                          ignition_mode: Optional[str] = None) -> Optional[str]:
     """Location / size / cell / duration / ignition / layer controls. Returns a
-    validation error message or None."""
+    validation error message or None.
+
+    ignition_mode (What-If live modes): "live" - ignition is ONLY observed NASA
+    FIRMS cells, the placement controls are locked; "whatif" - an ignition
+    source selector (NONE / OBSERVED / HYPOTHETICAL); the placement controls
+    apply to a HYPOTHETICAL ignition only. None: the original controls."""
     if st.session_state.pop(f"_{kp}_sync", False) or f"{kp}_w" not in st.session_state:
         _sync_widgets(setup, kp)
 
@@ -175,6 +184,8 @@ def render_setup_controls(twin, setup: dict, kp: str, show_location: bool = True
                 setup["placement"] = PLACEMENTS[0]
                 st.session_state[f"{kp}_place"] = PLACEMENTS[0]
 
+    if st.session_state.pop(f"_{kp}_sizemode_reset", False):        # set before the radio exists (quick size)
+        st.session_state[f"{kp}_sizemode"] = "Width × height"
     mode = st.radio("Size by", ["Width × height", "Area"], horizontal=True, key=f"{kp}_sizemode")
     c1, c2, c3, c4 = st.columns([1.1, 1.1, 0.9, 1.2])
     cell = c3.selectbox("Cell size (m)", list(SYSTEM.local_cell_options_m), key=f"{kp}_cell",
@@ -203,21 +214,39 @@ def render_setup_controls(twin, setup: dict, kp: str, show_location: bool = True
         if col.button(lbl, key=f"{kp}_sz_{lbl}", use_container_width=True):
             setup.update(width_m=float(pw), height_m=float(ph))
             st.session_state[f"_{kp}_sync"] = True
-            st.session_state[f"{kp}_sizemode"] = "Width × height"
+            st.session_state[f"_{kp}_sizemode_reset"] = True
             st.rerun()
 
+    hyp_locked = False
+    if ignition_mode == "live":
+        st.caption("Ignition: **observed NASA FIRMS detections only** (LIVE). Valid detections inside the area ignite "
+                   "their grid cell; with none, no fire is simulated. Hypothetical placement is available in "
+                   "LIVE DATA → WHAT-IF.")
+        hyp_locked = True
+    elif ignition_mode == "whatif":
+        from src.dashboard.live_modes import IGN_OPTIONS
+        if st.session_state.get(f"{kp}_igsrc") not in IGN_OPTIONS:
+            st.session_state[f"{kp}_igsrc"] = setup.get("ignition_source", "none") \
+                if setup.get("ignition_source") in IGN_OPTIONS else "none"
+        src = st.selectbox("Ignition source", list(IGN_OPTIONS), key=f"{kp}_igsrc", format_func=IGN_OPTIONS.get,
+                           help="NONE: no fire is simulated. OBSERVED: valid NASA FIRMS detections inside the area. "
+                                "HYPOTHETICAL: your ignition (edge, centre or map points), labelled HYPOTHETICAL.")
+        setup["ignition_source"] = src
+        hyp_locked = src != "hypothetical"
+
     i1, i2, i3, i4 = st.columns([1.4, 1, 0.8, 0.8])
-    placement = i1.selectbox("Ignition", PLACEMENTS, key=f"{kp}_place",
+    placement = i1.selectbox("Ignition" if not ignition_mode else "Hypothetical ignition placement", PLACEMENTS,
+                             key=f"{kp}_place", disabled=hyp_locked,
                              help="Upwind edge: the head fire runs across the area. Map points: use 'Set ignition on "
                                   "map' and click the map.")
-    n_ign = i2.slider("Ignition cells", 1, 9, key=f"{kp}_nign", disabled=placement == "Map points")
+    n_ign = i2.slider("Ignition cells", 1, 9, key=f"{kp}_nign", disabled=hyp_locked or placement == "Map points")
     grid = i3.toggle("Grid", key=f"{kp}_grid")
     boundary = i4.toggle("Boundary", key=f"{kp}_bound")
 
     cell = float(cell)
     setup.update(width_m=_snap(float(w), cell), height_m=_snap(float(h), cell), cell_m=cell, duration_min=dur,
                  placement=placement, n_ignition=int(n_ign), layers={"grid": bool(grid), "boundary": bool(boundary)})
-    if placement == "Map points" and not setup["ignition_points"]:
+    if placement == "Map points" and not setup["ignition_points"] and not hyp_locked:
         st.caption("No map points yet: click **Set ignition on map** on the map, then click inside the area. "
                     "Until then the centre is used.")
     return validate_setup(setup["width_m"], setup["height_m"], cell, dur)
@@ -264,7 +293,8 @@ def live_offline() -> bool:
 
 
 def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from_deg: float, height: int = 540,
-                     hotspots=None, hotspot_kind: str = "observed", hotspot_summary: str = ""):
+                     hotspots=None, hotspot_kind: str = "observed", hotspot_summary: str = "",
+                     ignition: Optional[dict] = None):
     """Interactive set-up map: search, drag/resize box, click-to-ignite, real
     NASA FIRMS detections around the location."""
     key = google_maps_key()
@@ -277,18 +307,36 @@ def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from
     payload = setup_payload(f, setup["duration_min"], wind_speed_ms, wind_from_deg, setup["n_ignition"],
                             setup["placement"], setup["ignition_points"], setup["layers"], key,
                             google_maps_map_id(), height=height, hotspots=hotspots or [],
-                            hotspot_kind=hotspot_kind, hotspot_summary=hotspot_summary)
+                            hotspot_kind=hotspot_kind, hotspot_summary=hotspot_summary,
+                            **_map_ignition_args(ignition))
     ev = new_event(render_fire_map(payload, key=f"{kp}_map"), f"{kp}_map")
     if ev and apply_map_event(ev, setup, twin):
         st.session_state[f"_{kp}_sync"] = True
         st.rerun()
 
 
+def _map_ignition_args(ign: Optional[dict]) -> dict:
+    """Map marker style for an ignition spec (live_modes.ignition_spec); None =
+    the original hypothetical placement markers."""
+    if not ign:
+        return {}
+    if ign["source"] == "OBSERVED_FIRMS":
+        return {"ignition_kind": "observed", "observed_points": ign["points"],
+                "ignition_label": f"OBSERVED · {ign.get('n_cells', len(ign['points']))} NASA FIRMS cell(s)"}
+    if ign["source"] == "HYPOTHETICAL_USER":
+        return {"ignition_kind": "hypothetical", "ignition_label": f"HYPOTHETICAL · {ign.get('placement') or '-'}"}
+    return {"ignition_kind": "none", "ignition_label": "NONE (no ignition source)"}
+
+
 # ── What-If -> Spread hand-off ────────────────────────────────────────────── #
 
-def build_simulation_config(twin, scenario: dict, setup: dict) -> dict:
+def build_simulation_config(twin, scenario: dict, setup: dict, live: Optional[dict] = None) -> dict:
     """Everything Module 2 needs, taken from the scenario twin that Module 1
-    just computed (no second weather or risk calculation)."""
+    just computed (no second weather or risk calculation).
+
+    live (What-If live modes, see live_modes / the What-If page): mode, live
+    baseline, scenario values, weather + FIRMS source/status, the observed
+    detections and the ignition source (OBSERVED / HYPOTHETICAL / NONE)."""
     snap = twin.current_snapshot
     loc = setup["location"]
     cond = zone_conditions(snap.processed_grid, snap.risk_scores, loc["lat"], loc["lon"])
@@ -315,17 +363,19 @@ def build_simulation_config(twin, scenario: dict, setup: dict) -> dict:
         "setup": setup_copy,
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "offline": bool(twin.offline), "scenario": dict(scenario),
+        "sim_mode": (live or {}).get("mode", "demo"),
+        "live": json.loads(json.dumps(live, default=str)) if live else None,
     }
 
 
-def apply_and_open_spread(twin, scenario: dict, setup: dict):
-    cfg = build_simulation_config(twin, scenario, setup)
+def apply_and_open_spread(twin, scenario: dict, setup: dict, live: Optional[dict] = None):
+    cfg = build_simulation_config(twin, scenario, setup, live)
     st.session_state["simulation_config"] = cfg
     st.session_state["_sim_twin"] = twin
     st.session_state["spread_mode"] = SPREAD_MODES[0]
     st.session_state.pop("applied_geo_result", None)               # a new scenario invalidates the old run
     st.session_state["_applied_set_sync"] = True
-    log_action("scenario", f"Scenario sent to Spread Simulation: {cfg['forest']} "
+    log_action("scenario", f"Scenario sent to Spread Simulation ({cfg['sim_mode']}): {cfg['forest']} "
                f"({cfg['latitude']:.4f}, {cfg['longitude']:.4f}), {cfg['width_m']:.0f}×{cfg['height_m']:.0f} m, "
                f"{duration_label(cfg['duration_min'])}, {cfg['temp_c']}°C, {cfg['humidity_pct']}% RH, "
                f"{cfg['wind_speed_ms']} m/s from {cfg['wind_from_deg']}°", twin.region.name)
@@ -337,34 +387,63 @@ def apply_and_open_spread(twin, scenario: dict, setup: dict):
 def render_applied_scenario_bar(cfg: dict):
     ts = cfg.get("timestamp", "")[:19].replace("T", " ")
     risk = cfg.get("risk", {})
-    wdir = float(cfg.get("wind_from_deg", 0))
     loc = cfg.get("selected_location", {})
+    live = cfg.get("live")
     src = {"preset": "preset forest", "google_geocoding": "Google Maps search", "google_places": "Google Maps search",
            "map": "custom map area", "highest_risk": "highest-risk zone"}.get(loc.get("source"), "preset forest")
+
+    def num(v, fmt):
+        return "n/a" if v is None else format(float(v), fmt)
+    wdir = cfg.get("wind_from_deg")
+    wdir_txt = "n/a" if wdir is None else f"{_compass_direction_name(float(wdir))} {float(wdir):.0f}°"
+    if live:
+        fc = live.get("firms", {})
+        last = ("FIRMS detections", f"{fc.get('n', 0)} ({live.get('classification', {}).get('n_valid', 0)} ignition)"
+                if fc.get("status") in ("live", "cached") else "UNAVAILABLE")
+    else:
+        last = ("Seeded hotspots", cfg.get("n_hotspots"))
     st.markdown(f"""
     <div class="kpi-row">
       <div class="kpi"><div class="lbl">Location</div><div class="val" style="font-size:15px">{cfg.get('forest')}</div></div>
-      <div class="kpi"><div class="lbl">Temperature</div><div class="val">{cfg.get('temp_c')}°C</div></div>
-      <div class="kpi"><div class="lbl">Humidity</div><div class="val">{cfg.get('humidity_pct')}%</div></div>
-      <div class="kpi"><div class="lbl">Wind</div><div class="val">{float(cfg.get('wind_speed_ms') or 0):.1f} m/s</div></div>
-      <div class="kpi"><div class="lbl">Wind from</div><div class="val">{_compass_direction_name(wdir)} {wdir:.0f}°</div></div>
-      <div class="kpi"><div class="lbl">Seeded hotspots</div><div class="val">{cfg.get('n_hotspots')}</div></div>
+      <div class="kpi"><div class="lbl">Temperature</div><div class="val">{num(cfg.get('temp_c'), '.1f')}°C</div></div>
+      <div class="kpi"><div class="lbl">Humidity</div><div class="val">{num(cfg.get('humidity_pct'), '.0f')}%</div></div>
+      <div class="kpi"><div class="lbl">Wind</div><div class="val">{num(cfg.get('wind_speed_ms'), '.1f')} m/s</div></div>
+      <div class="kpi"><div class="lbl">Wind from</div><div class="val">{wdir_txt}</div></div>
+      <div class="kpi"><div class="lbl">{last[0]}</div><div class="val" style="font-size:16px">{last[1]}</div></div>
       <div class="kpi"><div class="lbl">Zone risk</div><div class="val">{risk.get('zone_risk', 0):.0%}</div></div>
     </div>
     """, unsafe_allow_html=True)
-    st.caption(f"Scenario input applied {ts} UTC · {src} · {cfg.get('latitude'):.4f}°N, {cfg.get('longitude'):.4f}°E · "
-               f"{cfg.get('region')} zone {risk.get('zone_id')} ({risk.get('zone_severity')}) · synthetic scenario weather")
+    if live:
+        from src.dashboard.live_modes import MODE_NAMES
+        w = live.get("weather", {})
+        kind = ("LIVE WEATHER (real OpenWeatherMap observation)" if live["mode"] == "live"
+                else "WHAT-IF SCENARIO INPUT on a real OpenWeatherMap baseline")
+        st.caption(f"Mode: {MODE_NAMES.get(live['mode'], live['mode'])} · applied {ts} UTC · {src} · "
+                   f"{cfg.get('latitude'):.4f}°N, {cfg.get('longitude'):.4f}°E · {cfg.get('region')} zone "
+                   f"{risk.get('zone_id')} ({risk.get('zone_severity')}) · {kind} · weather "
+                   f"{str(w.get('status', '-')).upper()}")
+    else:
+        st.caption(f"Scenario input applied {ts} UTC · {src} · {cfg.get('latitude'):.4f}°N, {cfg.get('longitude'):.4f}°E · "
+                   f"{cfg.get('region')} zone {risk.get('zone_id')} ({risk.get('zone_severity')}) · synthetic scenario weather")
 
 
 def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg: float, wind_label: str,
-                      setup: dict, wind_schedule_15min=None, scenario: Optional[dict] = None):
-    """Google satellite map + CA on the simulation domain + VFX + analytics."""
+                      setup: dict, wind_schedule_15min=None, scenario: Optional[dict] = None,
+                      live: Optional[dict] = None):
+    """Google satellite map + CA on the simulation domain + VFX + analytics.
+
+    live (applied What-If live mode, from simulation_config["live"]): the run
+    ignites ONLY valid observed NASA FIRMS cells (LIVE), or the WHAT-IF
+    ignition source (observed / hypothetical); with no ignition source nothing
+    is simulated and the status says why."""
+    from src.dashboard import live_modes as lm
     snap = twin.current_snapshot
     kp = key_prefix
+    lmode = (live or {}).get("mode") if (live or {}).get("mode") in (lm.LIVE, lm.WHATIF) else None
     st.markdown('<div class="sec-hdr">Geographic fire spread — Google satellite</div>', unsafe_allow_html=True)
 
     with st.expander("Simulation area, duration and ignition", expanded=False):
-        err = render_setup_controls(twin, setup, f"{kp}_set", show_location=(kp != "applied"))
+        err = render_setup_controls(twin, setup, f"{kp}_set", show_location=(kp != "applied"), ignition_mode=lmode)
     if err:
         st.error(err)
         return
@@ -373,20 +452,29 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
     f = focus_from_setup(setup)
     loc = setup["location"]
     cond = zone_conditions(snap.processed_grid, snap.risk_scores, f.lat, f.lon)
+    plan = sev = None
+    if lmode:
+        sev = twin.alert_engine.classify(float(cond["risk_score"])) if np.isfinite(cond["risk_score"]) else "UNKNOWN"
+        plan = lm.plan_ignition(lmode, setup, f, cond, live.get("detections"), live["firms"]["status"])
 
     sig = (round(f.lat, 6), round(f.lon, 6), f.width_m, f.height_m, f.cell_m, setup["duration_min"],
            setup["placement"], setup["n_ignition"], json.dumps(setup["ignition_points"]),
            round(float(wind_speed_ms), 2), round(float(wind_from_deg), 1), cond["zone_id"],
-           round(cond["ffmc"], 3) if np.isfinite(cond["ffmc"]) else None, id(snap))
+           round(cond["ffmc"], 3) if np.isfinite(cond["ffmc"]) else None, id(snap),
+           lmode, setup.get("ignition_source") if lmode else None)
     res_key, sig_key, seed_key = f"{kp}_geo_result", f"{kp}_geo_sig", f"{kp}_geo_seed"
+    status_key = f"{kp}_geo_status"
     if st.session_state.get(sig_key) != sig:
         st.session_state[res_key] = None
+        st.session_state[status_key] = None
         st.session_state[sig_key] = sig
 
+    run_label = {lm.LIVE: "RUN LIVE SIMULATION", lm.WHATIF: "RUN WHAT-IF SIMULATION"}.get(lmode, "Run Simulation")
     b1, b2, b3, b4, _ = st.columns([1.3, 0.9, 1.3, 1.2, 2])
-    run = b1.button("Run Simulation", type="primary", key=f"{kp}_geo_run", use_container_width=True)
+    run = b1.button(run_label, type="primary", key=f"{kp}_geo_run", use_container_width=True)
     if b2.button("Reset", key=f"{kp}_geo_reset", use_container_width=True):
         st.session_state[res_key] = None
+        st.session_state[status_key] = None
     redraw = b3.button("New random draw", key=f"{kp}_geo_redraw", use_container_width=True)
     if b4.button("New scenario", key=f"{kp}_geo_new", use_container_width=True):
         st.switch_page(WHATIF_PAGE)
@@ -394,44 +482,76 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
         st.session_state[seed_key] = st.session_state.get(seed_key, 42) + 1
     seed = st.session_state.get(seed_key, 42)
 
-    if run or redraw:
+    if (run or redraw) and plan is not None and plan["ign"]["source"] == "NONE":
+        # No observed fire / no ignition source: nothing is simulated (no fire from weather or risk alone).
+        st.session_state[res_key] = None
+        st.session_state[status_key] = lm.result_status(lmode, live["firms"]["status"], plan["cls"], sev,
+                                                        plan["ign"], ran=False)
+        log_action("simulation", f"{lm.MODE_NAMES[lmode]} at {f.name}: {st.session_state[status_key]['title']} "
+                   "(no ignition, nothing simulated)", twin.region.name)
+    elif run or redraw:
         with st.spinner("Simulating fire spread on the simulation domain..."):
             dom = domain_for(f, setup["duration_min"])
             elev, terrain_src = domain_elevation(dom, allow_fetch=True)
             land = domain_land_cover(dom, allow_fetch=True)      # water / roads / buildings -> non-fuel
-            result = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=setup["n_ignition"],
-                                      placement=setup["placement"], seed=seed, elevation=elev,
-                                      terrain_source=terrain_src, wind_schedule_15min=wind_schedule_15min,
-                                      duration_minutes=setup["duration_min"],
-                                      ignition_points=setup["ignition_points"], land_cover=land)
+            if plan is not None and plan["ign"]["source"] == "OBSERVED_FIRMS":
+                result = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=0,
+                                          placement="Map points", seed=seed, elevation=elev,
+                                          terrain_source=terrain_src, wind_schedule_15min=wind_schedule_15min,
+                                          duration_minutes=setup["duration_min"],
+                                          ignition_points=plan["ign"]["points"], land_cover=land, strict_points=True)
+            else:
+                result = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=setup["n_ignition"],
+                                          placement=setup["placement"], seed=seed, elevation=elev,
+                                          terrain_source=terrain_src, wind_schedule_15min=wind_schedule_15min,
+                                          duration_minutes=setup["duration_min"],
+                                          ignition_points=setup["ignition_points"], land_cover=land)
         st.session_state[res_key] = result
+        st.session_state[status_key] = (lm.result_status(lmode, live["firms"]["status"], plan["cls"], sev,
+                                                         plan["ign"], ran=True) if plan is not None else None)
         st.session_state["last_geo_run"] = {"kp": kp}
         from src.dashboard.ui.global_ticker import render_global_ticker
         render_global_ticker()                      # show the new run in the global ticker
         fin = result.final
+        ign_txt = f" [{plan['ign']['label']}]" if plan is not None else ""
         log_action("simulation", f"Geographic spread at {f.name} ({f.lat:.4f}, {f.lon:.4f}), "
                    f"{f.width_m:.0f}×{f.height_m:.0f} m, {duration_label(setup['duration_min'])}: "
                    f"{fin.get('burned', 0)} cells burned ({fin.get('burned_ha', 0):.2f} ha), "
-                   f"{fin.get('burning', 0)} burning (wind {wind_speed_ms:.1f} m/s from {wind_from_deg:.0f}°)",
-                   twin.region.name)
+                   f"{fin.get('burning', 0)} burning (wind {wind_speed_ms:.1f} m/s from {wind_from_deg:.0f}°)"
+                   + ign_txt, twin.region.name)
     result = st.session_state.get(res_key)
+    run_status = st.session_state.get(status_key)
+    if plan is not None:
+        shown = run_status or lm.assess(lmode, live["firms"]["status"], plan["cls"], sev, plan["ign"])
+        st.markdown(lm.status_html(shown, plan["ign"]["label"]), unsafe_allow_html=True)
 
     # Real observations at the focus location (cached; not in demo mode). The map
     # shows real NASA FIRMS detections only; synthetic hotspots appear only in
-    # demo mode and are labelled as such.
+    # demo mode and are labelled as such. An applied live mode shows exactly the
+    # observations that were handed off.
     demo = live_offline()
-    live_data = live_observations(f.lat, f.lon, kp, demo)
-    if demo:
-        hot = hotspots_near(getattr(twin.ingestion, "last_hotspots", None), f.lat, f.lon)
-        hot_kind, hot_summary = "synthetic", (f"{len(hot)} demo (synthetic)" if hot else "-")
+    if lmode:
+        fs_full = live["firms"].get("status_full") or {"mode": live["firms"]["status"]}
+        live_data = (live["weather"].get("record"), live["weather"].get("status_full") or
+                     {"mode": live["weather"]["status"]}, pd.DataFrame(), fs_full)
+        hot = live.get("detections") or []
+        hot_kind = "observed"
+        hot_summary = (f"{len(hot)} observed" if hot else "none in window") if live["firms"]["status"] in \
+            ("live", "cached") else "unavailable"
     else:
-        hot, hot_kind, hot_summary = map_hotspots(live_data[2], live_data[3])
+        live_data = live_observations(f.lat, f.lon, kp, demo)
+        if demo:
+            hot = hotspots_near(getattr(twin.ingestion, "last_hotspots", None), f.lat, f.lon)
+            hot_kind, hot_summary = "synthetic", (f"{len(hot)} demo (synthetic)" if hot else "-")
+        else:
+            hot, hot_kind, hot_summary = map_hotspots(live_data[2], live_data[3])
     key = google_maps_key()
     if key:
         payload = sim_payload(f, setup["duration_min"], result, wind_speed_ms, wind_from_deg, hot,
                               hot_kind, setup["n_ignition"], setup["placement"],
                               setup["ignition_points"], setup["layers"], autoplay=result is not None,
-                              api_key=key, map_id=google_maps_map_id(), hotspot_summary=hot_summary)
+                              api_key=key, map_id=google_maps_map_id(), hotspot_summary=hot_summary,
+                              **_map_ignition_args(plan["ign"] if plan is not None else None))
         ev = new_event(render_fire_map(payload, key=f"{kp}_simmap"), f"{kp}_simmap")
         if ev and ev.get("kind") == "ignite" and apply_map_event(ev, setup, twin):
             st.session_state[f"_{kp}_set_sync"] = True
@@ -442,18 +562,40 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
     st.caption(f"{wind_label}: {wind_speed_ms:.1f} m/s from the {_compass_direction_name(wind_from_deg)} "
                f"({wind_from_deg:.0f}°), pushing fire and smoke towards the "
                f"{_compass_direction_name(wind_from_deg + 180)}.")
-    render_live_conditions(f.lat, f.lon, loc.get("name", ""), kp, demo, scenario=scenario, data=live_data)
+    if lmode:
+        cls = plan["cls"]
+        render_live_conditions(f.lat, f.lon, loc.get("name", ""), kp, demo, data=live_data, refresh=False,
+                               detections=live.get("detections"),
+                               firms_rows=[("In simulation area", f"{cls['n_in_area']} · valid ignitions "
+                                                                  f"{cls['n_valid']}")],
+                               scenario_card=lm.scenario_card(lmode, live.get("scenario_values") or {},
+                                                              [{**r, "changed": r.get("changed")} for r in
+                                                               live.get("changes") or []], live.get("baseline")))
+        st.caption(f"Observations as handed off from the What-If Simulator (weather fetched "
+                   f"{str(live['weather'].get('fetched_utc') or '-')[:16].replace('T', ' ')} UTC, FIRMS fetched "
+                   f"{str(live['firms'].get('fetched_utc') or '-')[:16].replace('T', ' ')} UTC). Use "
+                   "Refresh live data in the What-If Simulator for newer observations.")
+    else:
+        render_live_conditions(f.lat, f.lon, loc.get("name", ""), kp, demo, scenario=scenario, data=live_data)
 
     if result is None:
-        st.markdown('<div class="info-box">Press <b>Run Simulation</b> to compute the spread from the ignition '
-                    'shown on the map. Play, pause, speed and the simulation-time slider are on the map.</div>',
-                    unsafe_allow_html=True)
-        _render_provenance(cond, None, f, setup, scenario, wind_label)
+        if plan is None:
+            st.markdown('<div class="info-box">Press <b>Run Simulation</b> to compute the spread from the ignition '
+                        'shown on the map. Play, pause, speed and the simulation-time slider are on the map.</div>',
+                        unsafe_allow_html=True)
+        elif run_status is None:
+            st.markdown(f'<div class="info-box">Press <b>{run_label}</b>. '
+                        + ("It ignites only the valid observed NASA FIRMS cell(s) shown on the map."
+                           if plan["ign"]["source"] == "OBSERVED_FIRMS" else
+                           "It applies the HYPOTHETICAL ignition shown on the map." if plan["ign"]["source"] ==
+                           "HYPOTHETICAL_USER" else "No ignition source: no fire spread will be simulated.")
+                        + '</div>', unsafe_allow_html=True)
+        _render_provenance(cond, None, f, setup, scenario, wind_label, live=live, plan=plan)
         return
     _render_land_cover_note(result)
     _render_analytics(result, setup)
     _render_exports(result, kp)
-    _render_provenance(cond, result, f, setup, scenario, wind_label)
+    _render_provenance(cond, result, f, setup, scenario, wind_label, live=live, plan=plan)
 
 
 def land_cover_summary(result) -> Optional[str]:
@@ -556,8 +698,10 @@ def _render_exports(result, kp: str):
                        "application/geo+json", key=f"{kp}_dl_geo", use_container_width=True)
 
 
-def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: Optional[dict], wind_label: str):
+def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: Optional[dict], wind_label: str,
+                       live: Optional[dict] = None, plan: Optional[dict] = None):
     p = result.params if result is not None else {}
+    lmode = (live or {}).get("mode") if plan is not None else None
     if result is not None:
         e = result.elevation
         terrain = (f"Real DEM (SRTM 90 m via Open-Topo-Data / Open-Meteo), {e.min():.0f}–{e.max():.0f} m"
@@ -574,8 +718,10 @@ def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: 
         ("Terrain", terrain, "REAL" if result is not None and result.terrain_source == "dem" else "-"),
         ("Weather", (f"{scenario.get('temp_c')}°C, {scenario.get('humidity_pct')}% RH (What-If scenario)" if scenario
                      else f"{cond['temp_c']:.1f}°C, {cond['humidity_pct']:.0f}% RH (zone {cond['zone_id']})"),
-         "SCENARIO INPUT" if scenario else "LIVE / DEMO"),
-        ("Wind", wind_label, "SCENARIO INPUT" if scenario else "LIVE / DEMO"),
+         {"live": "LIVE WEATHER (REAL OBSERVATION)", "whatif": "SCENARIO INPUT (WHAT-IF)"}.get(
+             lmode, "SCENARIO INPUT" if scenario else "LIVE / DEMO")),
+        ("Wind", wind_label, {"live": "LIVE WEATHER (REAL OBSERVATION)", "whatif": "SCENARIO INPUT (WHAT-IF)"}.get(
+            lmode, "SCENARIO INPUT" if scenario else "LIVE / DEMO")),
         ("FFMC / BUI / FWI", f"{cond['ffmc']:.1f} / {cond['bui']:.1f} / {cond['fwi']:.1f} (zone {cond['zone_id']})", "DERIVED"),
         ("Model risk", f"{cond['risk_score']:.0%}" if np.isfinite(cond["risk_score"]) else "-", "DERIVED (XGBoost)"),
         ("Fuel load", f"NDVI estimate {cond['ndvi']:.2f} (zone {cond['zone_id']}) on fuel cells", "DERIVED"),
@@ -589,6 +735,30 @@ def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: 
          "SIMULATION OUTPUT"),
         ("Flames, smoke, embers, ash", "Rendered from the simulated cell states", "SIMULATED VISUALIZATION"),
     ]
+    if lmode:
+        from src.dashboard.live_modes import MODE_NAMES
+
+        def _ts(v):
+            return (str(v)[:16].replace("T", " ") + " UTC") if v else "-"
+        wv, fv, ign = live["weather"], live["firms"], plan["ign"]
+        cls = plan["cls"]
+        b = (live.get("baseline") or {})
+        rows = [("Mode", MODE_NAMES[lmode], "LIVE REAL-WORLD" if lmode == "live" else "WHAT-IF")] + rows + [
+            ("Weather source", f"OpenWeatherMap · {str(wv.get('status')).upper()} · fetched {_ts(wv.get('fetched_utc'))}"
+                               f" · observed {_ts(wv.get('observed_utc'))}", "REAL OBSERVATION"),
+            ("Real baseline", (", ".join(f"{k} {v}" for k, v in (b.get("values") or {}).items()) or "unavailable"),
+             "REAL OBSERVATION" if b else "-"),
+            ("NASA FIRMS", f"{fv.get('source')} · {str(fv.get('status')).upper()} · fetched {_ts(fv.get('fetched_utc'))} · "
+                           f"{fv.get('n', 0)} detection(s) in the search box, {cls['n_in_area']} in the area, "
+                           f"{cls['n_valid']} valid", "NASA FIRMS OBSERVATION"),
+            ("Ignition source", {"OBSERVED_FIRMS": f"OBSERVED FIRMS ({cls['n_cells']} cell(s))",
+                                 "HYPOTHETICAL_USER": f"HYPOTHETICAL USER ({ign.get('placement')})",
+                                 "NONE": "NONE (no fire simulated)"}[ign["source"]],
+             {"OBSERVED_FIRMS": "OBSERVED FIRE", "HYPOTHETICAL_USER": "HYPOTHETICAL IGNITION", "NONE": "-"}[ign["source"]]),
+            ("Simulation", "Cellular-automata fire spread" if result is not None else "Not run", "SIMULATED"),
+        ]
+    else:
+        rows.append(("Ignition source", f"HYPOTHETICAL USER ({setup.get('placement')})", "HYPOTHETICAL IGNITION"))
     with st.expander("Data provenance: real, derived, scenario and simulated"):
         st.dataframe(pd.DataFrame(rows, columns=["Item", "Value", "Type"]), hide_index=True, use_container_width=True)
         st.caption("The 25 m spread probability is a local-scale calibration that has not been validated against "

@@ -127,6 +127,7 @@ class WeatherClient:
                 return None
             resp.raise_for_status()
             data = resp.json()
+            wind = data.get("wind") or {}
             return {
                 "latitude": lat,
                 "longitude": lon,
@@ -143,6 +144,9 @@ class WeatherClient:
                                 if data.get("dt") else None),
                 "place_name": data.get("name") or "",
                 "fetched_at": datetime.now(timezone.utc).isoformat(),
+                # wind values the response did not contain (the 0.0 defaults above
+                # are not observations; the live simulator shows them as unavailable)
+                "missing_fields": [f for f, k in (("wind_speed_ms", "speed"), ("wind_deg", "deg")) if k not in wind],
             }
         except (requests.RequestException, KeyError, ValueError) as exc:
             self.last_error = f"OpenWeatherMap request failed: {self._clean(exc)[:200]}"
@@ -226,6 +230,7 @@ class WeatherClient:
                     rate_limited.set()
                     continue
                 if rec is not None:
+                    rec.pop("missing_fields", None)          # grid frame keeps its existing columns
                     records.append(rec)
 
         if rate_limited.is_set():

@@ -98,15 +98,20 @@ def setup_payload(focus: FocusArea, duration_minutes: float, wind_speed_ms: floa
                   n_ignition: int, placement: str, ignition_points: Sequence[Tuple[float, float]],
                   layers: dict, api_key: str, map_id: str, height: int = 560, search: bool = True,
                   hotspots: Optional[List[dict]] = None, hotspot_kind: str = "observed",
-                  hotspot_summary: str = "") -> dict:
+                  hotspot_summary: str = "", ignition_kind: str = "hypothetical",
+                  observed_points: Optional[Sequence[Tuple[float, float]]] = None,
+                  ignition_label: str = "") -> dict:
+    """ignition_kind: "hypothetical" (placement / map points, the default),
+    "observed" (only `observed_points`: valid NASA FIRMS cells) or "none"."""
     domain = domain_for(focus, duration_minutes)
     f, d = _geometry(focus, domain)
-    preview = ignition_mask(domain, n_ignition, placement, wind_speed_ms, wind_from_deg, ignition_points)
+    preview, picks = _ignition_preview(domain, ignition_kind, n_ignition, placement, wind_speed_ms, wind_from_deg,
+                                       ignition_points, observed_points)
     p = {"mode": "setup", "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
          "focus": f, "domain": d, "hasRun": False, "editable": True, "search": search,
          "limits": {"min": SYSTEM.focus_min_m, "max": SYSTEM.focus_max_m},
-         "placement": placement, "preview": np.flatnonzero(preview.ravel()).tolist(),
-         "ignitionPoints": [list(p) for p in ignition_points or []],
+         "placement": placement, "preview": preview, "ignitionKind": ignition_kind, "ignitionLabel": ignition_label,
+         "ignitionPoints": picks,
          "wind": [[round(float(wind_speed_ms), 2), round(float(wind_from_deg) % 360, 1)]],
          "metrics": [], "layers": layers, "hotspots": hotspots or [], "hotspotKind": hotspot_kind,
          "hotspotSummary": hotspot_summary}
@@ -118,19 +123,21 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
                 wind_speed_ms: float, wind_from_deg: float, hotspots: List[dict], hotspot_kind: str,
                 n_ignition: int, placement: str, ignition_points: Sequence[Tuple[float, float]],
                 layers: dict, autoplay: bool, api_key: str, map_id: str, height: int = 660,
-                hotspot_summary: str = "") -> dict:
+                hotspot_summary: str = "", ignition_kind: str = "hypothetical",
+                observed_points: Optional[Sequence[Tuple[float, float]]] = None, ignition_label: str = "") -> dict:
     domain = result.domain if result is not None else domain_for(focus, duration_minutes)
     f, d = _geometry(focus, domain)
+    preview, picks = _ignition_preview(domain, ignition_kind, n_ignition, placement, wind_speed_ms, wind_from_deg,
+                                       ignition_points, observed_points)
     p = {"mode": "sim", "key": api_key, "mapId": map_id or "DEMO_MAP_ID", "height": height,
          "focus": f, "domain": d, "editable": False, "search": False,
          "durationMin": float(duration_minutes), "durationLabel": duration_label(duration_minutes),
          "hotspots": hotspots, "hotspotKind": hotspot_kind, "hotspotSummary": hotspot_summary,
-         "layers": layers, "autoplay": bool(autoplay),
-         "placement": placement, "ignitionPoints": [list(p) for p in ignition_points or []]}
+         "layers": layers, "autoplay": bool(autoplay), "ignitionKind": ignition_kind, "ignitionLabel": ignition_label,
+         "placement": placement, "ignitionPoints": picks}
     if result is None:
-        preview = ignition_mask(domain, n_ignition, placement, wind_speed_ms, wind_from_deg, ignition_points)
         p.update({"hasRun": False, "stepMin": 0, "endT": 0, "lastStep": 0, "cells": [], "ign": [], "out": [],
-                  "inten": [], "nonfuel": False, "preview": np.flatnonzero(preview.ravel()).tolist(),
+                  "inten": [], "nonfuel": False, "preview": preview,
                   "wind": [[round(float(wind_speed_ms), 2), round(float(wind_from_deg) % 360, 1)]], "metrics": []})
     else:
         ign = result.ignition_step.ravel()
@@ -152,6 +159,19 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
         })
     p["uid"] = _uid(p)
     return p
+
+
+def _ignition_preview(domain, kind: str, n_ignition: int, placement: str, wind_speed_ms: float,
+                      wind_from_deg: float, ignition_points, observed_points) -> Tuple[list, list]:
+    """(preview cell indices, editable map points) for the ignition markers."""
+    if kind == "none":
+        return [], []
+    if kind == "observed":
+        mask = ignition_mask(domain, 0, "Map points", wind_speed_ms, wind_from_deg, observed_points or [],
+                             strict_points=True)
+        return np.flatnonzero(mask.ravel()).tolist(), []
+    mask = ignition_mask(domain, n_ignition, placement, wind_speed_ms, wind_from_deg, ignition_points)
+    return np.flatnonzero(mask.ravel()).tolist(), [list(q) for q in ignition_points or []]
 
 
 def _land_cover_payload(result: LocalSpreadResult) -> Optional[dict]:

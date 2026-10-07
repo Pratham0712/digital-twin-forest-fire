@@ -5,6 +5,7 @@ implements the 'DataIngestionModule fetches and validates incoming data' step
 of Scenario 1 (SRS 6.2.4).
 """
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -137,6 +138,15 @@ class DataIngestionModule:
             self.source_status["firms"] = _feed_status(
                 "not_configured", "FIRMS_MAP_KEY is not set: no detections (none invented)", n=0)
             return self.firms._empty_frame()
+        if self.offline and self.scenario.get("observed_hotspots") is not None:
+            # Live What-If modes: the REAL NASA FIRMS detections fetched for the
+            # selected location (possibly none) - never synthetic ones.
+            rows = self.scenario["observed_hotspots"]
+            df = pd.DataFrame(rows) if rows else self.firms._empty_frame()
+            self.source_status["firms"] = _feed_status(
+                self.scenario.get("firms_mode", "live"),
+                f"NASA FIRMS: {len(df)} real detection(s) at the selected location (none invented)", n=len(df))
+            return df
         if self.offline:
             df = FIRMSClient.generate_sample(
                 {"min_lat": self.region.min_lat, "max_lat": self.region.max_lat,
@@ -182,6 +192,26 @@ class DataIngestionModule:
             self.source_status["weather"] = _feed_status(
                 "not_configured", "OWM_API_KEY is not set: risk computed without current weather (none invented)", n=0)
             return self.weather._empty_frame()
+        if self.offline and "point_weather" in self.scenario:
+            # Live What-If modes: one weather record (the real OpenWeatherMap
+            # observation at the selected location, or the user's What-If values
+            # on top of it) applied exactly to every grid point - no jitter, no
+            # random rain. None = weather unavailable: nothing is invented.
+            pw = self.scenario["point_weather"]
+            if not pw:
+                self.source_status["weather"] = _feed_status(
+                    "error", "OpenWeatherMap unavailable: risk computed without current weather (none invented)", n=0)
+                return self.weather._empty_frame()
+            df = pd.DataFrame({"latitude": [p["latitude"] for p in grid_points],
+                               "longitude": [p["longitude"] for p in grid_points]})
+            for col in ("temperature_c", "humidity_pct", "pressure_hpa", "wind_speed_ms", "wind_deg",
+                        "precipitation_mm", "clouds_pct", "weather_main"):
+                df[col] = pw.get(col)
+            df["fetched_at"] = pw.get("fetched_at") or datetime.now(timezone.utc).isoformat()
+            self.source_status["weather"] = _feed_status(
+                self.scenario.get("weather_mode", "live"), self.scenario.get(
+                    "weather_label", "OpenWeatherMap observation at the selected location"), n=len(df))
+            return df
         if self.offline:
             df = WeatherClient.generate_sample(
                 grid_points,

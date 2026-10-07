@@ -77,9 +77,12 @@ if mode == SPREAD_MODES[0]:
         render_applied_scenario_bar(cfg)
         if "setup" not in cfg:                       # scenario applied by an older version of the page
             cfg["setup"] = {**default_setup(sim_twin), "region": sim_twin.region.name}
+        _live = cfg.get("live")
+        _wlabel = {"live": "Live wind (OpenWeatherMap observation)", "whatif": "WHAT-IF scenario wind"}.get(
+            (_live or {}).get("mode"), "Scenario wind")
         render_geo_spread(sim_twin, key_prefix="applied", wind_speed_ms=float(cfg["wind_speed_ms"]),
-                          wind_from_deg=float(cfg["wind_from_deg"]), wind_label="Scenario wind",
-                          setup=cfg["setup"], scenario=cfg.get("scenario"))
+                          wind_from_deg=float(cfg["wind_from_deg"]), wind_label=_wlabel,
+                          setup=cfg["setup"], scenario=None if _live else cfg.get("scenario"), live=_live)
         _regional_projection(sim_twin, "applied_ca")
 
 elif mode == SPREAD_MODES[1]:

@@ -172,7 +172,7 @@ button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.
     <div><i style="background:transparent;border:2px solid #8FD3FF"></i>Focus area</div>
     <div><i style="background:transparent;border:1px dashed #8a96a6"></i>Simulation domain</div>
     <div><i style="background:repeating-linear-gradient(90deg,transparent 0 3px,rgba(232,240,255,.5) 3px 4px)"></i>Grid (CA cells)</div>
-    <div><i style="background:transparent;border:2px solid #ffd166;border-radius:50%"></i>Ignition</div>
+    <div id="lign"><i id="lignc" style="background:transparent;border:2px solid #ffd166;border-radius:50%"></i><span id="lignt">Ignition</span></div>
     <div class="h">Simulated</div>
     <div><i style="background:linear-gradient(0deg,#b3260a,#ff9a2e,#fff0b0)"></i>Simulated fire (burning)</div>
     <div><i style="background:#3a1a0c"></i>Simulated burned area</div>
@@ -666,7 +666,7 @@ function updateAreaPanel(){
   setTxt('agrid',f.n_cols+' × '+f.n_rows);setTxt('acell',f.cell_m+' m');
   setTxt('adom',Math.round(DC*CELL)+' × '+Math.round(DR*CELL)+' m');
   setTxt('ahot',P.hotspotSummary||(P.hotspots&&P.hotspots.length?P.hotspots.length+(P.hotspotKind==='observed'?' observed':' demo (synthetic)'):'-'));
-  setTxt('aign',PICKS.length?PICKS.length+' map point'+(PICKS.length>1?'s':''):(P.placement||'-'));
+  setTxt('aign',P.ignitionLabel||(PICKS.length?PICKS.length+' map point'+(PICKS.length>1?'s':''):(P.placement||'-')));
 }
 function liveArea(b){         // live readout while the rectangle is being dragged/resized (no rerun)
   const ne=b.getNorthEast(),sw=b.getSouthWest(),lat=(ne.lat()+sw.lat())/2,lon=(ne.lng()+sw.lng())/2;
@@ -758,9 +758,15 @@ function draw(t,now){
 
   // ignition markers (before the run, and during the first CA step)
   if(!P.hasRun||t<1){ctx.globalCompositeOperation='source-over';
+    // OBSERVED ignition (valid NASA FIRMS cell): cyan, like the FIRMS detection; HYPOTHETICAL (user): yellow, labelled
+    const obsIg=P.ignitionKind==='observed',igc=obsIg?'#4dd0e1':'#ffd166';let lx=0,ly=0,ln=0;
     for(const [x,y] of ignitionXY()){const s=W2S(x,y);if(!onScreen(s,20))continue;const r=Math.max(5,CELL*PXM*0.45),pulse=0.75+0.25*Math.sin(now*0.005);
-      ctx.globalAlpha=(P.hasRun?1-t:1)*0.95;ctx.strokeStyle='#ffd166';ctx.lineWidth=2;ctx.beginPath();ctx.arc(s[0],s[1],r*pulse,0,Math.PI*2);ctx.stroke();
-      ctx.fillStyle='#ffd166';ctx.beginPath();ctx.arc(s[0],s[1],2.4,0,Math.PI*2);ctx.fill();}}
+      ctx.globalAlpha=(P.hasRun?1-t:1)*0.95;ctx.strokeStyle=igc;ctx.lineWidth=2;ctx.beginPath();ctx.arc(s[0],s[1],r*pulse,0,Math.PI*2);ctx.stroke();
+      ctx.fillStyle=igc;ctx.beginPath();ctx.arc(s[0],s[1],2.4,0,Math.PI*2);ctx.fill();lx+=s[0];ly=ln?Math.min(ly,s[1]-r):s[1]-r;ln++;}
+    if(ln){const txt=obsIg?'OBSERVED IGNITION · NASA FIRMS':'HYPOTHETICAL IGNITION';ctx.globalAlpha=P.hasRun?1-t:1;
+      ctx.font='700 10px ui-monospace,Menlo,monospace';const tw=ctx.measureText(txt).width,bx=lx/ln-tw/2-5,by=ly-20;
+      ctx.fillStyle='rgba(10,13,18,.82)';ctx.fillRect(bx,by,tw+10,15);ctx.strokeStyle=igc;ctx.lineWidth=1;ctx.strokeRect(bx,by,tw+10,15);
+      ctx.fillStyle=igc;ctx.fillText(txt,bx+5,by+11);}}
   if(!P.hasRun){ctx.globalAlpha=1;return;}
 
   if(show.veg&&L>=2&&TREES.length){ctx.globalCompositeOperation='source-over';
@@ -1015,7 +1021,12 @@ function applyPayload(p){
   if(firstLoad&&p.layers){for(const k in p.layers)if(k in show)show[k]=!!p.layers[k];}
   syncToggles();gridDirty=true;
   // panels per mode
-  const sim=MODE==='sim';
+  const sim=MODE==='sim',igk=p.ignitionKind||'hypothetical';
+  $('tools').classList.toggle('hide',igk!=='hypothetical');
+  if(igk!=='hypothetical'&&picking){picking=false;$('bPick').classList.remove('pick');$('bPick').textContent='Set ignition on map';}
+  $('lign').classList.toggle('hide',igk==='none');
+  $('lignc').style.borderColor=igk==='observed'?'#4dd0e1':'#ffd166';
+  $('lignt').textContent=igk==='observed'?'Observed ignition (NASA FIRMS cell)':'Hypothetical ignition (user)';
   $('hud').classList.toggle('hide',!sim);$('ctrl').classList.toggle('hide',!sim);$('layers').classList.toggle('hide',!sim);
   $('legend').classList.toggle('hide',!sim);$('area').classList.toggle('hide',sim);$('search').classList.toggle('hide',sim||!p.search);
   $('wrap').style.height=p.height+'px';setHeight(p.height+4);resize();

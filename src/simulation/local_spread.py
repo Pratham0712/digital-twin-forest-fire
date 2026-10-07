@@ -446,16 +446,19 @@ def _ignition_cells(n: int, count: int, placement: str, wind_speed: float, wind_
 
 
 def ignition_mask(domain: SimulationDomain, n_ignition: int, placement: str, wind_speed: float,
-                  wind_from: float, points: Optional[Sequence[Tuple[float, float]]] = None) -> np.ndarray:
+                  wind_from: float, points: Optional[Sequence[Tuple[float, float]]] = None,
+                  strict_points: bool = False) -> np.ndarray:
     """Ignition cells on the domain grid: placed inside the focus area, or at
-    user-picked map points (each point ignites the cell that contains it)."""
+    user-picked map points (each point ignites the cell that contains it).
+    strict_points=True (observed NASA FIRMS ignitions): only the given points,
+    never a fallback placement - no point inside the domain, no ignition."""
     mask = np.zeros((domain.n_rows, domain.n_cols), dtype=bool)
-    if placement.lower().startswith("map") and points:
-        for lat, lon in points:
+    if strict_points or (placement.lower().startswith("map") and points):
+        for lat, lon in points or []:
             rc = domain.cell_of(lat, lon)
             if rc is not None:
                 mask[rc] = True
-        if mask.any():
+        if mask.any() or strict_points:
             return mask
     f = domain.focus
     mask[domain.focus_slice()] = _placement_mask(f.n_rows, f.n_cols, n_ignition, placement, wind_speed, wind_from)
@@ -478,7 +481,7 @@ def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, w
                      base_spread_prob: Optional[float] = None,
                      duration_minutes: Optional[float] = None,
                      ignition_points: Optional[Sequence[Tuple[float, float]]] = None,
-                     land_cover=None) -> LocalSpreadResult:
+                     land_cover=None, strict_points: bool = False) -> LocalSpreadResult:
     """Run FireSpreadSimulator on the simulation domain around `focus`.
 
     duration_minutes (or horizon_minutes): simulated time to cover; defaults
@@ -492,6 +495,8 @@ def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, w
     base_spread_prob: FireSpreadSimulator's existing calibration parameter;
         defaults to SYSTEM.local_ca_base_spread_prob (see config.py).
     ignition_points: (lat, lon) pairs, used when placement == "Map points".
+    strict_points: ignite ONLY ignition_points (observed NASA FIRMS cells), with
+        no fallback placement.
     land_cover: optional fuel_map.LandCover for the domain. Its WATER / BUILT /
         ROAD / NON_FUEL cells join the CA's existing non-fuel mask, so they never
         ignite and fire never propagates into them; FUEL cells behave exactly as
@@ -523,7 +528,8 @@ def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, w
     else:
         sched = [(float(wind_speed_ms), float(wind_from_deg) % 360)] * n_steps
 
-    requested = ignition_mask(domain, n_ignition, placement, sched[0][0], sched[0][1], ignition_points)
+    requested = ignition_mask(domain, n_ignition, placement, sched[0][0], sched[0][1], ignition_points,
+                              strict_points=strict_points)
     ignition = requested & ~non_fuel                     # water / road / built / bare cells never ignite
 
     base = float(SYSTEM.local_ca_base_spread_prob if base_spread_prob is None else base_spread_prob)
