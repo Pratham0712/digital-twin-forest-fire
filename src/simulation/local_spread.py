@@ -407,6 +407,8 @@ class LocalSpreadResult:
     conditions: dict
     params: dict
     metrics: List[dict] = field(default_factory=list)
+    land_cover: Optional[np.ndarray] = None     # (rows, cols) fuel_map classes, None = no land-cover layer
+    land_cover_label: str = "No land-cover layer"
 
     @property
     def final(self) -> dict:
@@ -475,7 +477,8 @@ def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, w
                      wind_schedule_15min: Optional[Sequence[Tuple[float, float]]] = None,
                      base_spread_prob: Optional[float] = None,
                      duration_minutes: Optional[float] = None,
-                     ignition_points: Optional[Sequence[Tuple[float, float]]] = None) -> LocalSpreadResult:
+                     ignition_points: Optional[Sequence[Tuple[float, float]]] = None,
+                     land_cover=None) -> LocalSpreadResult:
     """Run FireSpreadSimulator on the simulation domain around `focus`.
 
     duration_minutes (or horizon_minutes): simulated time to cover; defaults
@@ -489,6 +492,10 @@ def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, w
     base_spread_prob: FireSpreadSimulator's existing calibration parameter;
         defaults to SYSTEM.local_ca_base_spread_prob (see config.py).
     ignition_points: (lat, lon) pairs, used when placement == "Map points".
+    land_cover: optional fuel_map.LandCover for the domain. Its WATER / BUILT /
+        ROAD / NON_FUEL cells join the CA's existing non-fuel mask, so they never
+        ignite and fire never propagates into them; FUEL cells behave exactly as
+        before.
     """
     duration = float(duration_minutes or horizon_minutes or SYSTEM.fire_spread_horizon_hours * 60)
     domain = domain_for(focus, duration)
@@ -501,6 +508,11 @@ def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, w
     fuel = np.full((rows, cols), ca["fuel"])
     buildup = np.full((rows, cols), ca["buildup"])
     non_fuel = np.full((rows, cols), ca["non_fuel"], dtype=bool)
+    lc_classes, lc_label = None, "No land-cover layer"
+    if land_cover is not None and getattr(land_cover, "classes", None) is not None \
+            and land_cover.classes.shape == (rows, cols):
+        lc_classes, lc_label = land_cover.classes.copy(), land_cover.label
+        non_fuel |= land_cover.non_fuel
     if elevation is None or elevation.shape != (rows, cols):
         elevation, terrain_source = np.zeros((rows, cols)), "flat"
 
@@ -511,7 +523,8 @@ def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, w
     else:
         sched = [(float(wind_speed_ms), float(wind_from_deg) % 360)] * n_steps
 
-    ignition = ignition_mask(domain, n_ignition, placement, sched[0][0], sched[0][1], ignition_points) & ~non_fuel
+    requested = ignition_mask(domain, n_ignition, placement, sched[0][0], sched[0][1], ignition_points)
+    ignition = requested & ~non_fuel                     # water / road / built / bare cells never ignite
 
     base = float(SYSTEM.local_ca_base_spread_prob if base_spread_prob is None else base_spread_prob)
     sim = FireSpreadSimulator(rows, cols, minutes_per_step=CA_STEP_MINUTES, base_spread_prob=base,
@@ -593,8 +606,12 @@ def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, w
               "duration_minutes": duration, "horizon_minutes": duration, "n_steps_planned": n_steps,
               "spread_potential": round(potential, 4), "base_spread_prob": base,
               "cell_m": focus.cell_m, "size_m": focus.size_m, "width_m": focus.n_cols * focus.cell_m,
-              "height_m": focus.n_rows * focus.cell_m, "domain_margin": domain.margin, **ca}
+              "height_m": focus.n_rows * focus.cell_m, "domain_margin": domain.margin,
+              "ignition_cells_requested": int(requested.sum()),
+              "ignition_cells_on_non_fuel": int((requested & non_fuel).sum()),
+              "non_fuel_cells": int(non_fuel.sum()), "land_cover": lc_label, **ca}
     return LocalSpreadResult(focus=focus, domain=domain, step_minutes=step_min, duration_minutes=duration,
                              history=history, ignition_step=ign, burnout_step=out, intensity=intensity,
                              non_fuel=non_fuel, elevation=elevation, terrain_source=terrain_source,
-                             wind_schedule=sched, conditions=conditions, params=params, metrics=metrics)
+                             wind_schedule=sched, conditions=conditions, params=params, metrics=metrics,
+                             land_cover=lc_classes, land_cover_label=lc_label)

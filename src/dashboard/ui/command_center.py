@@ -12,7 +12,7 @@ import os
 
 import streamlit as st
 
-from src.dashboard.ui.assets import ALERT_THUMB, HERO_IMAGE, data_uri
+from src.dashboard.ui.assets import ALERT_THUMB, HERO_IMAGE, HERO_URL, data_uri
 from src.dashboard.ui.global_ticker import compass, feed_status, latest_spread, regional_wind
 
 SPREAD_PAGE = "pages/2_Spread_Simulation.py"
@@ -43,13 +43,26 @@ def svg_icon(name: str) -> str:
 
 def render_dashboard_hero():
     """The supplied artwork, full width, natural aspect ratio (no crop, no
-    stretch), rounded with a subtle border."""
-    with st.container(key="cc_hero"):
-        if HERO_IMAGE.exists():
-            st.image(str(HERO_IMAGE), width="stretch")
-        st.markdown('<div class="cc-hero-note">Illustrative concept artwork. Figures painted into the image '
-                    '(wind, burned area, spread rate) are not live values; the live and simulated values are '
-                    'in the panels below.</div>', unsafe_allow_html=True)
+    stretch), rounded with a subtle border. Rendered as a plain <img> from
+    Streamlit's static file server: no st.image toolbar, so no fullscreen /
+    expand button appears over it. Falls back to an inline copy if static
+    serving is switched off."""
+    if not HERO_IMAGE.exists():
+        return
+    src = HERO_URL if _static_serving_enabled() else data_uri(HERO_IMAGE)
+    st.markdown(
+        f'<div class="cc-hero"><img src="{src}" alt="Forest Fire Digital Twin: from satellite observations to '
+        f'predictive action (illustrative artwork)" draggable="false" loading="eager" decoding="async"/></div>'
+        '<div class="cc-hero-note">Illustrative concept artwork. Figures painted into the image (wind, burned '
+        'area, spread rate) are not live values; the live and simulated values are in the panels below.</div>',
+        unsafe_allow_html=True)
+
+
+def _static_serving_enabled() -> bool:
+    try:
+        return bool(st.get_option("server.enableStaticServing"))
+    except Exception:
+        return False
 
 
 # ── status strip ───────────────────────────────────────────────────────────── #

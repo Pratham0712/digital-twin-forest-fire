@@ -148,12 +148,46 @@ location search, **Geocoding API** or **Places API (New)** (either one; Geocodin
    * Analytics, CSV export of every step and GeoJSON export of the simulated burned cells.
    * The original regional 2-hour projection is kept in an expander.
 
+### Fuel / non-fuel land cover
+
+Fire spreads only through fuel. Before each run the simulation domain is classified from
+**OpenStreetMap** (Overpass API; cached in `models/land_cover/`), never from the colours of the
+satellite image:
+
+| Class | OSM features | Fire |
+|---|---|---|
+| WATER | `natural=water`, `water=*`, `waterway=river/canal/riverbank`, reservoirs | never ignites, never spreads into it |
+| BUILT | `building=*`, residential / industrial / commercial land | never ignites, never spreads into it |
+| ROAD | paved highway classes, railways (centre line buffered by a typical width) | never ignites, never spreads into it |
+| NON_FUEL | bare rock, scree, sand, quarries, runways | never ignites, never spreads into it |
+| FUEL | everything else | unchanged behaviour |
+
+The classes are added to the CA's existing `NON_FUEL` state (the algorithm is unchanged; cells
+are 8-neighbour, line features are rasterised 4-connected so a road cannot be crossed
+diagonally; there is no ember spotting). Forest tracks, footpaths and seasonal streams are not
+treated as barriers. Ignition cells that fall on non-fuel are not lit (the page says how many).
+When OpenStreetMap cannot be reached, every cell is fuel and the page shows a warning. The map's
+**Land cover** layer shows the excluded cells.
+
+### 3D view
+
+* The 3D view needs a **vector map ID**: Google Cloud Console → Google Maps Platform → Map
+  management → Create map ID (type *JavaScript*, *Vector*, tick *Tilt* and *Rotation*), then
+  `GOOGLE_MAPS_MAP_ID=<id>` in `.env`. Without it the map falls back to `DEMO_MAP_ID`; if that is
+  not rendered as a vector map, the view stays top-down and the map says so.
+* **Ctrl + left-drag** rotates (left/right) and tilts (up/down); Google's own Shift + drag also works.
+* On a vector map every effect is projected through Google's `WebGLOverlayView` camera (the
+  same matrix the map uses for that frame), so fire, smoke, embers, ash, burn scar, grid and
+  boundary stay on their latitude/longitude while the camera moves. Google's JS vector map draws
+  the satellite imagery on a flat ground plane, so effects sit at that ground (+0.4 m for the
+  flame base); the DEM is used by the fire model (slope), not for vertical placement.
+
 ### Interface
 
 * **Global ticker** (`src/dashboard/ui/global_ticker.py`) on every signed-in page: region, risk level,
   alert zones, regional mean wind, last refresh, latest spread run (labelled SIMULATED) and whether the
   FIRMS / OpenWeatherMap feeds are LIVE or DEMO. With no state loaded it says "DEMO / OFFLINE MODE".
-* **Command Center**: hero artwork (`src/dashboard/assets/dashboard_hero.jpg`, an illustrative concept
+* **Command Center**: hero artwork (`src/dashboard/static/dashboard_hero.jpg`, served as a static file; an illustrative concept
   image, captioned as such; its painted numbers are not data), live status strip, wildfire alert panel
   (latest spread run, or the model's highest-risk zone, always labelled), key metrics, Explore modules,
   data / system status.

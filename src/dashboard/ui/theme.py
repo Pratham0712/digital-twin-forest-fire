@@ -105,40 +105,51 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, input:focus-v
 .stButton > button[kind="primary"] { background: linear-gradient(135deg, #FF7A18, #FF9A3C); color: #170b04; }
 [data-testid="stPageLink"] a:hover { border-color: var(--fire) !important; }
 
-/* ── global ticker ── */
-.gt { display: flex; align-items: stretch; height: 34px; margin: -14px 0 16px 0; border-radius: 999px;
-      background: rgba(13,17,26,0.92); border: 1px solid var(--border); overflow: hidden;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.30); }
+/* ── global ticker: dark navy glass, thin blue -> purple -> pink gradient border, pink as accent only ── */
+.gt { position: relative; display: flex; align-items: stretch; height: 36px; margin: -14px 0 16px 0; border-radius: 12px;
+      overflow: hidden; isolation: isolate;
+      border: 1px solid transparent;
+      background:
+        linear-gradient(100deg, rgba(10,16,34,0.94) 0%, rgba(14,18,40,0.94) 55%, rgba(22,14,36,0.94) 100%) padding-box,
+        linear-gradient(90deg, rgba(77,163,255,0.85), rgba(155,123,255,0.75) 55%, rgba(232,108,255,0.80)) border-box;
+      backdrop-filter: blur(10px) saturate(130%); -webkit-backdrop-filter: blur(10px) saturate(130%);
+      box-shadow: 0 0 0 1px rgba(77,163,255,0.06), 0 8px 26px rgba(8,12,30,0.55), 0 0 22px rgba(77,163,255,0.12),
+                  0 0 30px rgba(232,108,255,0.07); }
+.gt::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+      background: radial-gradient(420px 60px at 8% 0%, rgba(77,163,255,0.16), transparent 70%),
+                  radial-gradient(380px 60px at 92% 100%, rgba(232,108,255,0.11), transparent 70%); }
+.gt::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px; pointer-events: none;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent); }
 .gt-tag { display: flex; align-items: center; gap: 7px; padding: 0 14px; white-space: nowrap; flex: 0 0 auto;
-          font: 700 10.5px/1 var(--mono); letter-spacing: .14em; border-right: 1px solid var(--border); }
-.gt-tag.live { color: var(--ok); background: rgba(53,208,127,0.07); }
-.gt-tag.demo { color: var(--warn); background: rgba(251,191,36,0.07); }
-.gt-tag .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: gtBlink 1.6s ease-in-out infinite; }
+          font: 700 10.5px/1 var(--mono); letter-spacing: .14em;
+          border-right: 1px solid rgba(155,123,255,0.28); background: rgba(9,13,30,0.75); }
+.gt-tag.live { color: var(--ok); box-shadow: inset 0 0 18px rgba(53,208,127,0.10); }
+.gt-tag.demo { color: var(--warn); box-shadow: inset 0 0 18px rgba(251,191,36,0.08); }
+.gt-tag .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor;
+               animation: gtBlink 1.6s ease-in-out infinite; }
 .gt-view { position: relative; flex: 1 1 auto; overflow: hidden;
            -webkit-mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
                    mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent); }
 .gt-track { display: inline-flex; align-items: center; height: 100%; white-space: nowrap; will-change: transform;
             animation: gtScroll var(--gt-dur, 60s) linear infinite; }
 .gt:hover .gt-track { animation-play-state: paused; }
-.gt-item { display: inline-flex; align-items: center; gap: 7px; padding: 0 18px; font-size: 12.5px; color: #C9D2DD; }
-.gt-item b { font: 700 10.5px/1 var(--mono); letter-spacing: .12em; color: var(--muted); }
-.gt-item .v { color: #EEF2F7; font-weight: 600; }
+.gt-item { display: inline-flex; align-items: center; gap: 7px; padding: 0 18px; font-size: 12.5px; color: #D3DAEA; }
+.gt-item b { font: 700 10.5px/1 var(--mono); letter-spacing: .12em; color: #8FB4F0; }
+.gt-item .v { color: #F2F4FA; font-weight: 600; }
 .gt-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
 .gt-dot.ok { background: var(--ok); } .gt-dot.warn { background: var(--warn); }
 .gt-dot.crit { background: var(--crit); box-shadow: 0 0 8px rgba(255,59,59,.7); } .gt-dot.data { background: #4DA3FF; }
 .gt-dot.fire { background: var(--fire); }
-.gt-sep { color: #3A4556; }
+.gt-sep { color: rgba(232,108,255,0.55); }
 @keyframes gtScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes gtBlink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
-/* ── Command Center hero (supplied artwork, never cropped or stretched) ── */
-.st-key-cc_hero { gap: 6px !important; }
-.st-key-cc_hero [data-testid="stImage"], .st-key-cc_hero [data-testid="stImageContainer"],
-.st-key-cc_hero [data-testid="stFullScreenFrame"] { width: 100% !important; }
-.st-key-cc_hero img { width: 100% !important; height: auto !important; max-width: 100% !important; display: block;
-    border-radius: 18px; border: 1px solid rgba(255,255,255,0.08); object-fit: contain;
-    box-shadow: 0 22px 60px rgba(0,0,0,0.45); animation: heroIn .9s ease-out both; }
-.cc-hero-note { font-size: 11.5px; color: #6F7B8B; margin: 2px 4px 0 4px; }
+/* ── Command Center hero (supplied artwork, never cropped or stretched; plain <img>, no toolbar) ── */
+.cc-hero { position: relative; width: 100%; border-radius: 18px; overflow: hidden; line-height: 0;
+    border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 22px 60px rgba(0,0,0,0.45); animation: heroIn .9s ease-out both; }
+.cc-hero img { display: block; width: 100%; height: auto; max-width: 100%; object-fit: contain;
+    user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.cc-hero-note { font-size: 11.5px; color: #6F7B8B; margin: 8px 4px 0 4px; }
 @keyframes heroIn { from { opacity: 0; transform: scale(1.012); } to { opacity: 1; transform: scale(1); } }
 
 /* ── live status strip ── */
@@ -241,7 +252,7 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, input:focus-v
 }
 @media (prefers-reduced-motion: reduce) {
     .gt-track { animation: none; } .gt-view { overflow-x: auto; }
-    .fa, .fa .pulse::after, .gt-tag .dot, .cc-pill .gt-dot, .kpi, .st-key-cc_hero img,
+    .fa, .fa .pulse::after, .gt-tag .dot, .cc-pill .gt-dot, .kpi, .cc-hero,
     [class*="st-key-cc_explore_"] { animation: none !important; }
 }
 </style>

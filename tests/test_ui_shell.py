@@ -55,10 +55,13 @@ def test_command_center_layout(app):
     assert 'class="gt"' in md and "DEMO / OFFLINE MODE" in md          # ticker, demo-labelled
     assert "Karnataka" in md                                          # region from the twin
     assert "Illustrative concept artwork" in md                       # hero is labelled as artwork
+    # hero is a plain <img> (static file, or inline fallback): no st.image, so no fullscreen button
+    assert 'class="cc-hero"' in md and ("app/static/dashboard_hero.jpg" in md or "data:image/jpeg;base64" in md)
+    assert not app.get("imgs")
     assert 'class="fa' in md and "MODEL PREDICTION" in md and "DEMO DATA" in md
     assert 'class="cc-strip"' in md and 'class="kpi-row"' in md and 'class="sys-grid"' in md
     assert "OPEN SPREAD SIMULATION  →" in [p.label for p in app.get("page_link")]
-    order = [md.index(s) for s in ('class="gt"', "Illustrative concept artwork", 'class="cc-strip"',
+    order = [md.index(s) for s in ('class="gt"', 'class="cc-hero"', "Illustrative concept artwork", 'class="cc-strip"',
                                    'class="fa', 'class="kpi-row"', 'class="ex-card"', 'class="sys-grid"')]
     assert order == sorted(order)
 

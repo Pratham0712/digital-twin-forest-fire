@@ -143,9 +143,21 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
             "nonfuel": bool(result.non_fuel.all()), "preview": [],
             "wind": [[round(float(s), 2), round(float(dg), 1)] for s, dg in result.wind_schedule],
             "metrics": [{k: x.get(k) for k in keys} for x in result.metrics],
+            "landCover": _land_cover_payload(result),
         })
     p["uid"] = _uid(p)
     return p
+
+
+def _land_cover_payload(result: LocalSpreadResult) -> Optional[dict]:
+    """Non-fuel cells by class (sparse, domain cell indices) for the map's
+    Land cover layer; the simulation itself already excluded them."""
+    lc = getattr(result, "land_cover", None)
+    if lc is None:
+        return None
+    flat = lc.ravel()
+    return {"label": result.land_cover_label,
+            "cells": {str(int(k)): np.flatnonzero(flat == k).tolist() for k in np.unique(flat) if int(k) != 0}}
 
 
 def missing_key_card():

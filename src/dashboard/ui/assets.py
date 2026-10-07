@@ -4,8 +4,12 @@ from functools import lru_cache
 from pathlib import Path
 
 ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"   # served by Streamlit at app/static/
 
-HERO_IMAGE = ASSETS_DIR / "dashboard_hero.jpg"          # the supplied hero artwork, unmodified aspect
+# The supplied hero artwork (unmodified composition). Served as a static file and
+# drawn with a plain <img>, so Streamlit adds no image toolbar / fullscreen button.
+HERO_IMAGE = STATIC_DIR / "dashboard_hero.jpg"
+HERO_URL = "app/static/dashboard_hero.jpg"
 LOGIN_BACKGROUND = ASSETS_DIR / "login_background.jpg"  # blurred, downscaled copy of the hero artwork
 ALERT_THUMB = ASSETS_DIR / "alert_thumb.jpg"            # fire-front crop of the hero artwork
 

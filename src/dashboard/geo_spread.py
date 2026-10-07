@@ -35,6 +35,7 @@ from config.config import SYSTEM
 from src.dashboard.dashboard_common import _compass_direction_name, log_action
 from src.dashboard.geo_fire_map import (duration_label, hotspots_near, missing_key_card, new_event,
                                         render_fire_map, setup_payload, sim_payload)
+from src.simulation.fuel_map import CLASS_NAMES, FUEL, domain_land_cover
 from src.simulation.local_spread import (DEFAULT_FOCUS, FOCUS_AREAS, HIGHEST_RISK_FOCUS, PLACEMENTS,
                                          FocusArea, domain_elevation, domain_for, focus_options_for_region,
                                          n_steps_for, resolve_focus, run_local_spread, step_minutes_for,
@@ -387,11 +388,12 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
         with st.spinner("Simulating fire spread on the simulation domain..."):
             dom = domain_for(f, setup["duration_min"])
             elev, terrain_src = domain_elevation(dom, allow_fetch=True)
+            land = domain_land_cover(dom, allow_fetch=True)      # water / roads / buildings -> non-fuel
             result = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=setup["n_ignition"],
                                       placement=setup["placement"], seed=seed, elevation=elev,
                                       terrain_source=terrain_src, wind_schedule_15min=wind_schedule_15min,
                                       duration_minutes=setup["duration_min"],
-                                      ignition_points=setup["ignition_points"])
+                                      ignition_points=setup["ignition_points"], land_cover=land)
         st.session_state[res_key] = result
         st.session_state["last_geo_run"] = {"kp": kp}
         from src.dashboard.ui.global_ticker import render_global_ticker
@@ -429,9 +431,38 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
                     unsafe_allow_html=True)
         _render_provenance(cond, None, f, setup, scenario, wind_label)
         return
+    _render_land_cover_note(result)
     _render_analytics(result, setup)
     _render_exports(result, kp)
     _render_provenance(cond, result, f, setup, scenario, wind_label)
+
+
+def land_cover_summary(result) -> Optional[str]:
+    """One line describing the fuel mask the run used (None without a layer)."""
+    lc = getattr(result, "land_cover", None)
+    if lc is None:
+        return None
+    if not result.land_cover_label.startswith("OpenStreetMap"):
+        return result.land_cover_label
+    parts = [f"{int((lc == k).sum())} {name}" for k, name in CLASS_NAMES.items() if k != FUEL and (lc == k).any()]
+    return (f"{result.land_cover_label}: " + (", ".join(parts) + " cells excluded from fire spread"
+                                               if parts else "no water, road or built-up cells in this domain"))
+
+
+def _render_land_cover_note(result):
+    p = result.params
+    line = land_cover_summary(result)
+    if line is None:
+        line = result.params.get("land_cover", "No land-cover layer")
+    skipped = int(p.get("ignition_cells_on_non_fuel", 0))
+    msg = line + "."
+    if skipped:
+        msg += (f" {skipped} of {p.get('ignition_cells_requested', 0)} requested ignition cell(s) fell on water, "
+                "road, built-up or bare ground and were not ignited.")
+    if "unavailable" in line.lower():
+        st.warning(msg)
+    else:
+        st.caption(msg + " Turn on the map's Land cover layer to see these cells.")
 
 
 def _render_analytics(result, setup: dict):
@@ -528,7 +559,11 @@ def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: 
         ("Wind", wind_label, "SCENARIO INPUT" if scenario else "LIVE / DEMO"),
         ("FFMC / BUI / FWI", f"{cond['ffmc']:.1f} / {cond['bui']:.1f} / {cond['fwi']:.1f} (zone {cond['zone_id']})", "DERIVED"),
         ("Model risk", f"{cond['risk_score']:.0%}" if np.isfinite(cond["risk_score"]) else "-", "DERIVED (XGBoost)"),
-        ("Fuel", f"NDVI estimate {cond['ndvi']:.2f}, uniform in the domain", "DERIVED"),
+        ("Fuel load", f"NDVI estimate {cond['ndvi']:.2f} (zone {cond['zone_id']}) on fuel cells", "DERIVED"),
+        ("Fuel / non-fuel mask", (land_cover_summary(result) or p.get("land_cover", "No land-cover layer"))
+         if result is not None else "OpenStreetMap water, roads, buildings and bare ground, fetched when the "
+                                    "simulation runs", "REAL (OpenStreetMap)"
+         if result is not None and result.land_cover_label.startswith("OpenStreetMap") else "-"),
         ("Grid", f"{f.cell_m:.0f} m cells, CA step {step_minutes_for(f.cell_m):g} min", "COMPUTATIONAL MODEL"),
         ("Fire spread / burned area", "FireSpreadSimulator (cellular automata)"
          + (f", base spread probability {p.get('base_spread_prob')} (local calibration), seed {p.get('seed')}" if p else ""),
