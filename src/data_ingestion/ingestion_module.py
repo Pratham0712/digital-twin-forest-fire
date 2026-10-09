@@ -5,6 +5,7 @@ implements the 'DataIngestionModule fetches and validates incoming data' step
 of Scenario 1 (SRS 6.2.4).
 """
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -20,6 +21,18 @@ from src.data_ingestion.firms_client import FIRMSClient
 from src.data_ingestion.weather_client import WeatherClient
 
 logger = logging.getLogger(__name__)
+
+# Last SUCCESSFUL live response per (feed, region box, window), shared by every
+# session of this process. Used only when a later live request fails, and then
+# labelled "cached" - never as a fresh observation.
+import threading as _threading
+_LIVE_CACHE: dict = {}
+_LIVE_LOCK = _threading.Lock()
+
+
+def _feed_status(mode: str, label: str, **kw) -> dict:
+    """mode: live | cached | error | demo | not_configured."""
+    return {"mode": mode, "label": label, **kw}
 
 
 MAX_REGION_SPAN_DEG = 20.0      # keeps a custom box to a few hundred cells at 0.5 deg
@@ -111,31 +124,126 @@ class DataIngestionModule:
         from src.ml_models.fire_history import StaticSourceMask
         self.static_mask = StaticSourceMask.load(MODELS_DIR)
         self.weather_grid = build_weather_grid(self.region)
+        # What each feed actually delivered on the last refresh (see _feed_status)
+        self.source_status: dict = {"firms": _feed_status("pending", "Not fetched yet"),
+                                    "weather": _feed_status("pending", "Not fetched yet")}
+
+    def _region_key(self, feed: str, extra=()) -> tuple:
+        r = self.region
+        return (feed, round(r.min_lat, 3), round(r.max_lat, 3), round(r.min_lon, 3), round(r.max_lon, 3)) + tuple(extra)
 
     def fetch_fire_hotspots(self) -> pd.DataFrame:
-        if self.offline or not API.firms_map_key:
-            return FIRMSClient.generate_sample(
+        if not self.offline and not API.firms_map_key:
+            # Real-data mode without a key: report it, never substitute synthetic detections.
+            self.source_status["firms"] = _feed_status(
+                "not_configured", "FIRMS_MAP_KEY is not set: no detections (none invented)", n=0)
+            return self.firms._empty_frame()
+        if self.offline and self.scenario.get("observed_hotspots") is not None:
+            # Live What-If modes: the REAL NASA FIRMS detections fetched for the
+            # selected location (possibly none) - never synthetic ones.
+            rows = self.scenario["observed_hotspots"]
+            df = pd.DataFrame(rows) if rows else self.firms._empty_frame()
+            self.source_status["firms"] = _feed_status(
+                self.scenario.get("firms_mode", "live"),
+                f"NASA FIRMS: {len(df)} real detection(s) at the selected location (none invented)", n=len(df))
+            return df
+        if self.offline:
+            df = FIRMSClient.generate_sample(
                 {"min_lat": self.region.min_lat, "max_lat": self.region.max_lat,
                  "min_lon": self.region.min_lon, "max_lon": self.region.max_lon},
                 n_points=self.scenario.get("n_hotspots", 8),
                 seed=self.scenario.get("seed", 42),
                 prior=self._fire_prior(),
             )
-        return self.firms.fetch_hotspots(
+            self.source_status["firms"] = _feed_status(
+                "demo", "Demo / offline mode: synthetic detections (not observed)", n=len(df))
+            return df
+        df = self.firms.fetch_hotspots(
             self.region.min_lat, self.region.min_lon, self.region.max_lat, self.region.max_lon,
             API.firms_day_range,
         )
+        st = dict(self.firms.last_status)
+        key = self._region_key("firms", (API.firms_day_range, API.firms_source))
+        if st.get("ok"):
+            with _LIVE_LOCK:
+                _LIVE_CACHE[key] = (df.copy(), st)
+            self.source_status["firms"] = _feed_status(
+                "live", f"NASA FIRMS {API.firms_source}: {st['n']} detection(s), last {API.firms_day_range} days",
+                n=st["n"], fetched_utc=st["fetched_utc"], latest_acq_utc=st.get("latest_acq_utc"),
+                source=API.firms_source, note=st.get("error"))
+            return df
+        with _LIVE_LOCK:
+            cached = _LIVE_CACHE.get(key)
+        if cached is not None:
+            cdf, cst = cached
+            self.source_status["firms"] = _feed_status(
+                "cached", f"NASA FIRMS unavailable; showing cached data from {cst['fetched_utc']}",
+                n=cst["n"], fetched_utc=cst["fetched_utc"], latest_acq_utc=cst.get("latest_acq_utc"),
+                source=API.firms_source, error=st.get("error"))
+            return cdf.copy()
+        self.source_status["firms"] = _feed_status(
+            "error", "NASA FIRMS unavailable; no detections shown (none invented)", n=0,
+            fetched_utc=st.get("fetched_utc"), source=API.firms_source, error=st.get("error"))
+        return df
 
     def fetch_weather(self) -> pd.DataFrame:
         grid_points = self.weather_grid[["latitude", "longitude"]].to_dict("records")
-        if self.offline or not API.owm_api_key:
-            return WeatherClient.generate_sample(
+        if not self.offline and not API.owm_api_key:
+            self.source_status["weather"] = _feed_status(
+                "not_configured", "OWM_API_KEY is not set: risk computed without current weather (none invented)", n=0)
+            return self.weather._empty_frame()
+        if self.offline and "point_weather" in self.scenario:
+            # Live What-If modes: one weather record (the real OpenWeatherMap
+            # observation at the selected location, or the user's What-If values
+            # on top of it) applied exactly to every grid point - no jitter, no
+            # random rain. None = weather unavailable: nothing is invented.
+            pw = self.scenario["point_weather"]
+            if not pw:
+                self.source_status["weather"] = _feed_status(
+                    "error", "OpenWeatherMap unavailable: risk computed without current weather (none invented)", n=0)
+                return self.weather._empty_frame()
+            df = pd.DataFrame({"latitude": [p["latitude"] for p in grid_points],
+                               "longitude": [p["longitude"] for p in grid_points]})
+            for col in ("temperature_c", "humidity_pct", "pressure_hpa", "wind_speed_ms", "wind_deg",
+                        "precipitation_mm", "clouds_pct", "weather_main"):
+                df[col] = pw.get(col)
+            df["fetched_at"] = pw.get("fetched_at") or datetime.now(timezone.utc).isoformat()
+            self.source_status["weather"] = _feed_status(
+                self.scenario.get("weather_mode", "live"), self.scenario.get(
+                    "weather_label", "OpenWeatherMap observation at the selected location"), n=len(df))
+            return df
+        if self.offline:
+            df = WeatherClient.generate_sample(
                 grid_points,
                 temp_c=self.scenario.get("temp_c"),
                 wind_speed_ms=self.scenario.get("wind_speed_ms"),
                 humidity_pct=self.scenario.get("humidity_pct"),
+                wind_from_deg=self.scenario.get("wind_from_deg"),
             )
-        return self.weather.fetch_grid(grid_points)
+            self.source_status["weather"] = _feed_status("demo", "Demo / offline mode: synthetic weather", n=len(df))
+            return df
+        df = self.weather.fetch_grid(grid_points)
+        st = dict(self.weather.last_status)
+        key = self._region_key("weather")
+        if not df.empty:
+            with _LIVE_LOCK:
+                _LIVE_CACHE[key] = (df.copy(), st)
+            self.source_status["weather"] = _feed_status(
+                "live", f"OpenWeatherMap current weather at {st['n_ok']}/{st['n_total']} grid points",
+                n=st["n_ok"], n_total=st["n_total"], fetched_utc=st["fetched_utc"], note=st.get("error"))
+            return df
+        with _LIVE_LOCK:
+            cached = _LIVE_CACHE.get(key)
+        if cached is not None:
+            cdf, cst = cached
+            self.source_status["weather"] = _feed_status(
+                "cached", f"OpenWeatherMap unavailable; showing cached weather from {cst['fetched_utc']}",
+                n=cst["n_ok"], fetched_utc=cst["fetched_utc"], error=st.get("error"))
+            return cdf.copy()
+        self.source_status["weather"] = _feed_status(
+            "error", "OpenWeatherMap unavailable; risk computed without current weather", n=0,
+            fetched_utc=st.get("fetched_utc"), error=st.get("error"))
+        return df
 
     def _fire_prior(self) -> Optional[pd.DataFrame]:
         """Historical fire frequency per cell inside this region (from the

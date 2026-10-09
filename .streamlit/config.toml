@@ -1,2 +1,14 @@
 [browser]
 gatherUsageStats = false
+
+[server]
+# Serves src/dashboard/static/ at app/static/ (the Command Center hero image).
+enableStaticServing = true
+
+[theme]
+# Dark base so Streamlit's own widgets match the dashboard's dark design system.
+base = "dark"
+primaryColor = "#FF7A18"
+backgroundColor = "#080B12"
+secondaryBackgroundColor = "#111722"
+textColor = "#E8EDF3"

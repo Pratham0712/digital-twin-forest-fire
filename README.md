@@ -117,7 +117,108 @@ are set. For real data:
 ```
 FIRMS_MAP_KEY=your_key_here
 OWM_API_KEY=your_key_here
+GOOGLE_MAPS_API_KEY=your_key_here   # Spread Simulation satellite map (Maps JavaScript API)
+GOOGLE_MAPS_MAP_ID=                 # optional vector Map ID for 3D tilt / rotation
 ```
+
+### What-If -> Spread Simulation
+
+Google Cloud APIs for the key in `GOOGLE_MAPS_API_KEY`: **Maps JavaScript API** (map) and, for the
+location search, **Geocoding API** or **Places API (New)** (either one; Geocoding is tried first).
+
+1. **What-If Simulator**
+   * Weather scenario: temperature, humidity, wind speed, wind direction (the bearing the wind blows
+     FROM), seeded hotspots, or a preset.
+   * Simulation set-up: a preset forest (Bandipur, Nagarhole, Kudremukh, highest-risk zone) or any place
+     found with the Google search box on the map; width x height (100-3000 m) or an area (0.25-5 km²);
+     cell size (5 / 10 / **25** / 50 m); simulated duration (1 min - 4 h); ignition (upwind edge, centre,
+     downwind edge, or points clicked on the map); grid / boundary visibility.
+   * The map shows the focus area as a box you can drag and resize (values snap to whole cells and
+     update when you release), the 25 m grid, the simulation domain (dashed) and the ignition.
+   * **Apply Scenario & Open Spread Simulation** transfers all of it.
+2. **Spread Simulation**
+   * **Run Simulation** runs the project's `FireSpreadSimulator` on the *simulation domain*: the focus
+     area plus a margin of (CA steps + 1) cells on every side. The CA moves fire at most one cell per
+     step, so the fire is limited only by the simulated duration (or fuel), never by the drawn box.
+   * Conditions: FFMC / BUI / NDVI of the regional grid zone, the scenario wind, a real DEM sampled on a
+     ~90 m lattice (Open-Topo-Data / Open-Meteo, cached in `models/focus_terrain/dem_lattice.csv`).
+   * The map plays the result with fire-front flames, merged wind-driven smoke plumes, embers, ash and
+     a burn scar. Play / pause / reset / 1x-2x-5x, the simulation-time slider, layer toggles and
+     camera presets run in the browser (no Streamlit reruns).
+   * Analytics, CSV export of every step and GeoJSON export of the simulated burned cells.
+   * The original regional 2-hour projection is kept in an expander.
+
+### Real data: NASA FIRMS, OpenWeatherMap, Google Maps
+
+Keys are read from `.env` (names in `.env.example`; `.env` is git-ignored and never printed). With
+keys set, the sidebar's *Offline / demo mode* is off by default and the real APIs are used:
+
+* **Regional twin** (all pages): NASA FIRMS `VIIRS_SNPP_NRT` detections for the region (last 10
+  days, used by the model's fire-history features) and OpenWeatherMap current weather on the
+  region's weather grid, refreshed at the auto-refresh interval or with *Refresh satellite & weather
+  data* (Command Center) / *Refresh data* (sidebar).
+* **Selected location** (What-If and Spread Simulation): OpenWeatherMap current weather at the focus
+  latitude/longitude and NASA FIRMS detections in a 25 × 25 km box around it (last 2 days), cached
+  10 / 15 minutes per place, with *Refresh weather* / *Refresh FIRMS* buttons. Shown as
+  **REAL WEATHER** and **NASA FIRMS** cards next to the **SCENARIO INPUT** card; the What-If values
+  drive the simulation, the real values are displayed, never mixed.
+* **Honest status**: each feed reports what it actually delivered: `LIVE`, `CACHED` (request failed,
+  last real response shown with its timestamp), `UNAVAILABLE` (no data shown, nothing invented),
+  `NOT CONFIGURED` or `DEMO`. The ticker, page badges and the Command Center *Data & system status*
+  use these; synthetic data is never labelled LIVE. API keys never appear in logs or messages.
+* **Maps**: the Command Center regional risk map, the What-If set-up map and the Spread Simulation map
+  are the same Google satellite component. Risk zones are drawn as semi-transparent model
+  predictions; NASA FIRMS detections are cyan circles (observed); simulated fire is drawn as
+  flames / burn scar; demo hotspots are purple and labelled synthetic.
+
+### Fuel / non-fuel land cover
+
+Fire spreads only through fuel. Before each run the simulation domain is classified from
+**OpenStreetMap** (Overpass API; cached in `models/land_cover/`), never from the colours of the
+satellite image:
+
+| Class | OSM features | Fire |
+|---|---|---|
+| WATER | `natural=water`, `water=*`, `waterway=river/canal/riverbank`, reservoirs | never ignites, never spreads into it |
+| BUILT | `building=*`, residential / industrial / commercial land | never ignites, never spreads into it |
+| ROAD | paved highway classes, railways (centre line buffered by a typical width) | never ignites, never spreads into it |
+| NON_FUEL | bare rock, scree, sand, quarries, runways | never ignites, never spreads into it |
+| FUEL | everything else | unchanged behaviour |
+
+The classes are added to the CA's existing `NON_FUEL` state (the algorithm is unchanged; cells
+are 8-neighbour, line features are rasterised 4-connected so a road cannot be crossed
+diagonally; there is no ember spotting). Forest tracks, footpaths and seasonal streams are not
+treated as barriers. Ignition cells that fall on non-fuel are not lit (the page says how many).
+When OpenStreetMap cannot be reached, every cell is fuel and the page shows a warning. The map's
+**Land cover** layer shows the excluded cells.
+
+### 3D view
+
+* The 3D view needs a **vector map ID**: Google Cloud Console → Google Maps Platform → Map
+  management → Create map ID (type *JavaScript*, *Vector*, tick *Tilt* and *Rotation*), then
+  `GOOGLE_MAPS_MAP_ID=<id>` in `.env`. Without it the map falls back to `DEMO_MAP_ID`; if that is
+  not rendered as a vector map, the view stays top-down and the map says so.
+* **Ctrl + left-drag** rotates (left/right) and tilts (up/down); Google's own Shift + drag also works.
+* On a vector map every effect is projected through Google's `WebGLOverlayView` camera (the
+  same matrix the map uses for that frame), so fire, smoke, embers, ash, burn scar, grid and
+  boundary stay on their latitude/longitude while the camera moves. Google's JS vector map draws
+  the satellite imagery on a flat ground plane, so effects sit at that ground (+0.4 m for the
+  flame base); the DEM is used by the fire model (slope), not for vertical placement.
+
+### Interface
+
+* **Global ticker** (`src/dashboard/ui/global_ticker.py`) on every signed-in page: region, risk level,
+  alert zones, regional mean wind, last refresh, latest spread run (labelled SIMULATED) and whether the
+  FIRMS / OpenWeatherMap feeds are LIVE or DEMO. With no state loaded it says "DEMO / OFFLINE MODE".
+* **Command Center**: hero artwork (`src/dashboard/static/dashboard_hero.jpg`, served as a static file; an illustrative concept
+  image, captioned as such; its painted numbers are not data), live status strip, wildfire alert panel
+  (latest spread run, or the model's highest-risk zone, always labelled), key metrics, Explore modules,
+  data / system status.
+* **Sidebar**: the active page's button uses the blue → purple → pink gradient (from the first paint);
+  no other element uses it.
+* **Login**: glass card over a blurred copy of the hero artwork. "Create account" explains that accounts
+  are issued by an admin on the Admin page; there is no self-registration.
+* Streamlit's dark theme is set in `.streamlit/config.toml` so built-in widgets match.
 
 ### MySQL (optional - SQLite is used when unset)
 
@@ -181,6 +282,54 @@ python -m src.scheduler.scheduler --once           # single cycle (use this
 pytest tests/ -v
 ```
 
+## Local simulation: fire model, domain, ignition check, study region
+
+* **Fire model (default `local_ca_model = "ros"`).** A rate-of-spread cellular automaton
+  (`src/simulation/fire_behaviour.py`, `src/simulation/ros_ca.py`). The spread RATE comes from the Canadian
+  FBP System equations: FFMC (so temperature and humidity) and wind give the Initial Spread Index, a blended
+  FBP D-1 / O-1a fuel gives the head-fire ROS, BUI the build-up effect, and the fire ellipse gives flank and
+  backing rates. Each burning cell offers its 24 nearest neighbours (true distances, so diagonals are
+  geometrically corrected) an arrival time; slope, fuel continuity (NDVI) and ±25 % simulated fuel
+  variability modify it. The fuel blend and residence times are ASSUMPTIONS, not calibrated for Bandipur:
+  the output is a physically consistent what-if, not an operational forecast. The original probability CA
+  is still available with `model="legacy"`.
+* **Time.** The selected simulated duration is always computed in full (internal sub-steps keep fast fires
+  accurate; ~60 frames are stored). Playback is separate: 1× shows about one simulated minute per second;
+  0.5× / 2× / 5× change only the playback, never the result. If the fire goes out, the run still covers
+  the whole duration and says when it went out.
+* **Simulation domain.** Configurable before a run: Auto (focus + duration margin), Local 1 km, Small 2 km,
+  Medium 5 km, Large 10 km or Custom, plus a maximum extent (2 to 15 km). The dashed amber box on the map is
+  the domain; the solid blue box is the focus area. Ignitions can be placed anywhere inside the domain. The
+  domain still grows before the fire reaches its edge, up to the maximum extent; the run says so if that
+  limit is reached.
+* **Hypothetical ignition check.** A clicked point is checked against mapped OpenStreetMap features around
+  that point (`src/simulation/ignition_site.py`; a small cached tile per click, nothing is fetched while
+  the box is dragged). Roads, buildings / built-up areas, water and bare ground are rejected; mapped
+  vegetation is accepted; anything else is LOCATION UNVERIFIED (accepted with a warning). This check only
+  decides where an ignition may be placed, never how the fire spreads.
+* **Bandipur default.** The preset opens on a forest interior (11.6560 N, 76.5800 E, west of the
+  Gundlupet-Ooty road; chosen from Google satellite imagery), not on the Bandipur campus / NH 766 roadside.
+* **Study region.** Bandipur Tiger Reserve boundary from `data/study_region/` (OFFICIAL file when provided,
+  otherwise the labelled APPROXIMATE extent); fire crossing it continues into the REGIONAL EXTENSION with
+  separate statistics.
+* **Benchmarks (offline).** `python scripts/benchmark_phase3.py` (run path, both models, domain presets) and
+  `python scripts/benchmark_ui_offline.py` (app start and page reruns, demo data, network disabled).
+* **Optional research module.** `src/landcover/` (ESA WorldCover + OSM + Sentinel-2 fusion) and
+  `scripts/verify_landcover_sources.py` are kept for analysis; they are not part of the simulation path.
+
+## Reports and emergency alerts
+
+* After every completed simulation: **Download / Print Simulation Report** (PDF, DOCX, printable view; built from
+  the stored snapshot of that run, report ID `FFDT-…`) and **Send Emergency Alert** (admin only).
+* Alerts are opt-in: review dialog → recipients (enabled, verified channels only) → explicit confirmation. WHAT-IF
+  alerts always say *"SIMULATION ONLY — This is a hypothetical forest-fire scenario, not confirmation of an active
+  fire."* Every attempt is audited (Admin → Emergency alerts). Statuses are the provider's (accepted / queued /
+  failed / not configured / mock) - never "delivered" without confirmation.
+* Configure in `.env`: `SMTP_*` (email), `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` (SMS),
+  `ALERT_PROVIDER_MODE=mock` to test without sending. Signed-in users get an in-app alarm (sidebar) with
+  acknowledge / mute / test; email and SMS cannot play a custom sound on a recipient's phone.
+* Extra packages: `pip install reportlab python-docx matplotlib`.
+
 ## Project structure
 
 ```
@@ -241,6 +390,11 @@ main.py                                Single entry point, runs the full pipelin
   rather than a full recursive carry-forward (station data has gaps).
 - CA spread uses real/synthetic elevation for slope but does not model
   fire suppression, roads, or firebreaks.
+- The 25 m local spread (Spread Simulation map) uses the same CA with a
+  local-scale base spread probability (`SystemConfig.local_ca_base_spread_prob`
+  = 0.8; the regional CA keeps 0.35) and uniform fuel inside the 500 m area.
+  It is not yet validated against observed fire perimeters. Vegetation drawn
+  on the map is a procedural representation, not individual real trees.
 - Without `DATABASE_URL`, the scheduler and dashboard share one local
   SQLite file; set `DATABASE_URL` for any multi-instance or cloud deployment.
 

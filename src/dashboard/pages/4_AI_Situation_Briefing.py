@@ -4,7 +4,7 @@ entirely template-based (no external LLM API call) so it works offline, has
 zero cost, and never fails mid-demo due to a network/API issue. References
 the zone's real FWI components, weather, and (when available) the real
 historical detection record for added context - e.g. "similar to N% of days
-in the 2023-2025 record" - which is a genuinely data-grounded statement, not
+in the 2023-2026 record" - which is a genuinely data-grounded statement, not
 a generic canned line.
 
 Rendered as a structured card (severity banner, gauge, wind compass, stat
@@ -21,6 +21,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.utils.timezone import utc_to_ist
 from src.dashboard.dashboard_common import (
     set_page, build_sidebar, ensure_twin, render_header, render_wind_compass,
     SEV_COLOR, SYSTEM, DATA_RAW_DIR, log_action,
@@ -149,7 +150,7 @@ def render_briefing_card(d: dict):
         if d["hist_pct"] is not None:
             st.markdown(
                 f'<div class="info-box" style="margin-top:10px;">This FWI level exceeds approximately '
-                f'<b>{d["hist_pct"]:.0f}%</b> of all zone-days in the real 2023–2025 historical record.</div>',
+                f'<b>{d["hist_pct"]:.0f}%</b> of all zone-days in the real 2023–2026 historical record.</div>',
                 unsafe_allow_html=True,
             )
 
@@ -178,7 +179,7 @@ def briefing_data_to_text(d: dict) -> str:
     if not np.isnan(d["wind_speed"]):
         lines.append(f"Wind: {d['wind_speed']:.1f} m/s")
     if d["hist_pct"] is not None:
-        lines.append(f"Historical context: exceeds ~{d['hist_pct']:.0f}% of 2023-2025 zone-days")
+        lines.append(f"Historical context: exceeds ~{d['hist_pct']:.0f}% of 2023-2026 zone-days")
     lines.append("Key factors:")
     lines += [f"  - {text}" for _, text in d["key_factors"]]
     lines.append("Recommended actions:")
@@ -211,7 +212,7 @@ if mode == "Single zone":
     render_briefing_card(data)
 
     st.download_button("Download as text", briefing_data_to_text(data),
-                        file_name=f"briefing_{chosen}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.txt",
+                        file_name=f"briefing_{chosen}_{utc_to_ist(datetime.now(timezone.utc)).strftime('%Y%m%d_%H%M')}_IST.txt",
                         on_click=log_action, args=("report", f"Downloaded briefing for {chosen} "
                                                    f"({severity}, risk {risk:.0%})", twin.region.name))
 
@@ -231,6 +232,6 @@ else:
         if len(extreme_zones) > 25:
             st.caption(f"+ {len(extreme_zones) - 25} more EXTREME zones not shown (batch limit 25)")
         st.download_button("Download full batch report", "\n\n".join(full_report),
-                            file_name=f"batch_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.txt",
+                            file_name=f"batch_report_{utc_to_ist(datetime.now(timezone.utc)).strftime('%Y%m%d_%H%M')}_IST.txt",
                             on_click=log_action, args=("report", f"Downloaded batch report "
                                                        f"({len(extreme_zones)} EXTREME zones)", twin.region.name))

@@ -1,0 +1,1471 @@
+<!DOCTYPE html>
+<!--
+  Forest Fire Digital Twin - geographic simulation map (Streamlit custom component).
+
+  One Google Maps instance and one set of canvases per page, created ONCE. Streamlit
+  reruns only send new arguments ("render" messages); the map, camera and WebGL/2D
+  contexts are kept and the new payload is applied in place.
+
+  Layers (bottom -> top): Google satellite (real geography) -> focus boundary (map
+  rectangle) -> computational grid -> burn scar -> fire bed / glow -> smoke -> flames ->
+  embers -> ash -> wind. Everything drawn on the canvases is positioned in metres
+  east/north/up of the focus centre (latitude / longitude / height above the ground).
+
+  Projection (one camera for the map and every effect):
+    * vector map (map ID): Google's own WebGLOverlayView camera. In onDraw the
+      transformer gives the exact model-view-projection matrix of the frame being
+      rendered; every cell, flame, smoke puff, ember and ash flake is projected through
+      it as a 3-D point (east, north, up). Drawing happens inside that same map frame,
+      so effects stay on their geographic location while the camera pans, zooms,
+      rotates or tilts. Flames start at the ground (+0.4 m); smoke, embers and ash rise
+      from the fire position; the burn scar and grid are drawn on the ground plane.
+      Google's JS vector map renders the satellite imagery on a flat ground plane
+      (no terrain relief), so "ground" is altitude 0 of that plane; the DEM is used by
+      the fire model (slope), not for vertical placement, which would lift effects off
+      the imagery.
+    * raster map (no map ID): ground-plane homography from the map projection (2D).
+  Ctrl + left-drag rotates (heading) and tilts the 3-D view; Shift + drag is Google's own.
+
+  Modes
+    region: Command Center overview. Google satellite + semi-transparent model risk
+            zones (MODEL PREDICTION) + NASA FIRMS detections (OBSERVED) or, in demo
+            mode, synthetic hotspots labelled as such. Hover a zone for its values.
+    setup : editable/draggable focus rectangle, Google search, click-to-ignite.
+            Emits {kind:'area'|'place'|'ignite'|'layers'} back to Python.
+    sim   : plays a CA history computed in Python (Python decides which cell burns
+            when; this file only draws it). Click-to-ignite emits {kind:'ignite'}.
+-->
+<html><head><meta charset="utf-8">
+<style>
+:root{--bg:#0a0c10;--surface:rgba(12,15,20,.86);--border:#2c3644;--text:#e8edf3;--muted:#8a96a6;
+      --accent:#ff6b35;--blue:#8FD3FF;--pink:#FF8CCF;}
+*{box-sizing:border-box}
+html,body{margin:0;background:transparent;font-family:'Plus Jakarta Sans','Segoe UI',system-ui,sans-serif;color:var(--text);overflow:hidden}
+#wrap{position:relative;width:100%;height:600px;border-radius:14px;overflow:hidden;border:1px solid #232b36;background:#0a0c10}
+#map{position:absolute;inset:0}
+canvas.layer{position:absolute;inset:0;pointer-events:none}
+#gridfx{z-index:3} #scarfx{z-index:4;mix-blend-mode:multiply} #statefx{z-index:5} #fx{z-index:6} #lightfx{z-index:7;mix-blend-mode:screen}
+.panel{position:absolute;z-index:10;background:var(--surface);border:1px solid var(--border);border-radius:12px;
+       backdrop-filter:blur(8px);font-size:11px;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+.t{font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+#hud{top:10px;left:10px;padding:9px 11px;width:228px;max-height:calc(100% - 80px);overflow:auto}
+#hud .badge{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.1em;padding:2px 6px;border-radius:999px;
+  border:1px solid #ffd166;color:#ffd166;margin:1px 0 3px}
+#hud .badge.live{border-color:#4dd0e1;color:#4dd0e1}
+.advbtn{margin-top:6px;padding:2px 6px;font-size:10px;background:transparent;color:var(--muted)}
+#hud .t{color:var(--accent)}
+#hud .nm{font-size:13px;font-weight:700;margin:2px 0 4px}
+#hud .clock{font-family:'JetBrains Mono',Consolas,monospace;font-size:19px;font-weight:700;margin:2px 0 2px}
+#hud .sub{color:var(--muted);font-size:10px;margin-bottom:6px}
+.g{display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.g span:nth-child(odd){color:var(--muted)} .g span:nth-child(even){text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+#hud .note{margin-top:6px;color:#ffb347;font-weight:600;display:none}
+#hud .sim{margin-top:6px;color:var(--muted);font-size:9.5px;line-height:1.35}
+#area{top:10px;left:10px;padding:10px 12px;width:220px;pointer-events:none}
+#area .t{color:var(--blue)}
+#search{top:10px;left:50%;transform:translateX(-50%);padding:6px;display:flex;gap:6px;width:min(460px,60%)}
+#search input{flex:1;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 9px;font:inherit;font-size:12px;outline:none}
+#search input:focus{border-color:var(--blue)}
+#results{position:absolute;top:44px;left:6px;right:6px;background:#0d1117;border:1px solid var(--border);border-radius:8px;display:none;max-height:220px;overflow:auto}
+#results div{padding:7px 10px;cursor:pointer;font-size:11.5px;border-bottom:1px solid #1b222c}
+#results div:hover{background:#161d27} #results small{color:var(--muted);display:block}
+#layers{top:10px;left:50%;transform:translateX(-50%);padding:5px 8px;display:flex;align-items:center;gap:4px;white-space:nowrap}
+#layers .lbl,#ctrl .lbl{color:var(--muted);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;margin:0 3px}
+#cam{right:10px;top:58px;padding:6px;display:flex;flex-direction:column;gap:4px}
+#cam .hint{color:var(--muted);font-size:9px;text-align:center;line-height:1.3;padding:1px 0 0}
+#wrap.orbit{cursor:grabbing}
+#ctrl{left:50%;transform:translateX(-50%);bottom:10px;padding:6px 10px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+#tools{right:10px;top:430px;padding:6px;display:flex;flex-direction:column;gap:4px}
+#wind{right:10px;top:362px;padding:8px 10px;display:flex;align-items:center;gap:9px;pointer-events:none}
+#wind svg{width:38px;height:38px}
+#wind .v{font-weight:700;font-size:12px} #wind .d{color:var(--muted);font-size:10px;line-height:1.35}
+#legend{left:10px;bottom:58px;padding:7px 10px;line-height:1.65;pointer-events:none;font-size:10.5px}
+#legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;border:1px solid rgba(255,255,255,.18)}
+#legend .h{color:var(--muted);font-size:9px;letter-spacing:.12em;text-transform:uppercase;margin-top:3px}
+button{font-family:inherit;font-weight:600;font-size:11px;background:#151a22;color:var(--text);border:1px solid var(--border);
+       border-radius:8px;padding:5px 9px;cursor:pointer;transition:border-color .15s,background .15s}
+button:hover{border-color:var(--blue)} button.on{border-color:#ff9a5c;color:#ffc58f;background:rgba(255,107,53,.12)}
+button.prim{background:linear-gradient(90deg,#ff6b35,#ff9a3c);border:0;color:#1a0d05}
+button:disabled{opacity:.4;cursor:default}
+button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.12)}
+#layers button{padding:4px 7px;font-size:10.5px}
+#tl{width:230px;accent-color:#ff6b35}
+#tlab{font-family:'JetBrains Mono',Consolas,monospace;min-width:92px;text-align:right}
+#err{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;background:rgba(10,12,16,.95);color:#ff6b4a;font-size:13px}
+#toast{left:50%;transform:translateX(-50%);top:58px;padding:7px 12px;max-width:380px;color:var(--text);display:none;z-index:12;text-align:center}
+.sep{width:1px;height:18px;background:var(--border);margin:0 2px}
+.hide{display:none!important}
+#rinfo{top:10px;left:10px;padding:10px 12px;width:270px;pointer-events:none}
+#rinfo .g{grid-template-columns:auto 1fr}
+#rinfo .t{color:#ffb38a} #rinfo .sim{margin-top:6px;color:var(--muted);font-size:9.5px;line-height:1.4}
+#rlegend{left:10px;bottom:24px;padding:8px 11px;line-height:1.65;pointer-events:none;font-size:10.5px;width:210px}
+#rlegend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+#rlegend .h{color:var(--muted);font-size:9px;letter-spacing:.12em;text-transform:uppercase;margin-top:3px}
+#rlegend .rbar{height:8px;border-radius:4px;margin:4px 0 2px;background:linear-gradient(90deg,rgba(30,58,95,.5),rgba(138,100,16,.75) 40%,#e0a21b 65%,#ff8a3d 80%,#ff5a3c)}
+#rlegend .rbar-l{display:flex;justify-content:space-between;color:var(--muted);font-size:9px;margin-bottom:3px}
+#rtools{right:10px;top:58px;padding:6px}
+#rtip{padding:8px 10px;font-size:11px;pointer-events:none;min-width:170px;z-index:14}
+#rtip b{font-size:12px}
+</style></head>
+<body>
+<div id="wrap">
+  <div id="map"></div>
+  <canvas id="gridfx" class="layer"></canvas>
+  <canvas id="scarfx" class="layer"></canvas>
+  <canvas id="statefx" class="layer"></canvas>
+  <canvas id="fx" class="layer"></canvas>
+  <canvas id="lightfx" class="layer"></canvas>
+
+  <div id="hud" class="panel hide">
+    <div class="t">Simulated fire spread</div>
+    <div class="nm" id="hname"></div>
+    <div><span id="hbadge" class="badge">WHAT-IF · SIMULATED</span></div>
+    <div class="clock" id="hclock">T+0 s</div>
+    <div class="sub">of <span id="hdur"></span> · <span id="hstat">ready</span></div>
+    <div class="g">
+      <span>Ignition</span><span id="hign">-</span>
+      <span>ML risk (predicted)</span><span id="hrisk">-</span>
+      <span>Burning now</span><span id="hburnA">0 ha</span>
+      <span>Burned total</span><span id="harea">0 ha</span>
+      <span>Front · spread</span><span id="hdist">0 m</span>
+      <span>Wind</span><span id="hwind">-</span>
+      <span>Domain</span><span id="hdom"></span>
+    </div>
+    <div class="note" id="hout">Fire has spread beyond the focus area</div>
+    <div class="note" id="hexp" style="color:#8FD3FF"></div>
+    <div class="note" id="hcross" style="color:#c6f36b"></div>
+    <div class="note" id="hlim" style="color:#ff6b6b"></div>
+    <div class="note" id="hext" style="color:#c9d4e2"></div>
+    <div class="note" id="hstale" style="color:#ffb347"></div>
+    <button id="hadv" class="advbtn">Advanced details ▸</button>
+    <div id="hadvg" class="g hide" style="margin-top:4px">
+      <span>Burning cells</span><span id="hburn">0</span>
+      <span>Burned cells</span><span id="hburned">0</span>
+      <span>Fire perimeter</span><span id="hper">0 m</span>
+      <span>Rate of spread</span><span id="hros">0 m/min</span>
+      <span>Intensity</span><span id="hint">-</span>
+      <span>Fire centroid</span><span id="hcen">-</span>
+      <span>Smoke plume heading</span><span id="hplume">-</span>
+      <span>Focus area</span><span id="hfocus"></span>
+      <span id="hregl">Bandipur · regional ext.</span><span id="hreg">-</span>
+      <span>Report ID</span><span id="hrid">-</span>
+    </div>
+  </div>
+
+  <div id="area" class="panel hide">
+    <div class="t">Simulation area</div>
+    <div class="nm" id="aname" style="font-size:12.5px;font-weight:700;margin:3px 0 6px"></div>
+    <div class="g">
+      <span>Centre</span><span id="acen"></span>
+      <span>Dimensions</span><span id="adim"></span>
+      <span>Area</span><span id="aarea"></span>
+      <span>Grid</span><span id="agrid"></span>
+      <span>Cell</span><span id="acell"></span>
+      <span>Domain (with margin)</span><span id="adom"></span>
+      <span>Ignition</span><span id="aign"></span>
+      <span>NASA FIRMS</span><span id="ahot">-</span>
+    </div>
+    <div class="sim" style="margin-top:6px;color:var(--muted);font-size:9.5px">Drag the box to move it, drag its corners or edges to resize. Values update when you release.</div>
+  </div>
+
+  <div id="search" class="panel hide">
+    <input id="q" placeholder="Search Google Maps: a forest, park, town or place" autocomplete="off">
+    <button id="qgo">Search</button>
+    <div id="results"></div>
+  </div>
+
+  <div id="layers" class="panel hide">
+    <span class="lbl">Layers</span>
+    <button class="tog" data-t="fire">Fire</button><button class="tog" data-t="smoke">Smoke</button>
+    <button class="tog" data-t="embers">Embers</button><button class="tog" data-t="ash">Ash</button>
+    <button class="tog" data-t="heat">Heat</button><span class="sep"></span>
+    <button class="tog" data-t="grid">Grid</button><button class="tog" data-t="boundary">Boundary</button>
+    <button class="tog" data-t="front">Front</button><button class="tog" data-t="wind">Wind</button>
+    <button class="tog" data-t="veg">Vegetation</button>
+    <button class="tog" data-t="lc" title="Land-cover cells the fire cannot burn: water, roads, built-up, bare ground">Land cover</button>
+  </div>
+
+  <div id="legend" class="panel hide">
+    <div class="h">Real / observed</div>
+    <div><i style="background:transparent;border:2px solid #4dd0e1;border-radius:50%"></i><span id="lhot">Observed hotspot</span></div>
+    <div class="h">Computational model</div>
+    <div><i style="background:transparent;border:2px solid #8FD3FF"></i>Focus area</div>
+    <div><i style="background:transparent;border:1px dashed #8a96a6"></i>Simulation domain (grows with the fire)</div>
+    <div id="lreg" class="hide"><i style="background:transparent;border:2px dashed #c6f36b"></i><span id="lregt">Bandipur boundary</span></div>
+    <div id="lext" class="hide"><i style="background:repeating-linear-gradient(45deg,transparent 0 3px,rgba(198,243,107,.6) 3px 5px)"></i>Regional extension (outside Bandipur)</div>
+    <div><i style="background:repeating-linear-gradient(90deg,transparent 0 3px,rgba(232,240,255,.5) 3px 4px)"></i>Grid (CA cells)</div>
+    <div id="lign"><i id="lignc" style="background:transparent;border:2px solid #ffd166;border-radius:50%"></i><span id="lignt">Ignition</span></div>
+    <div class="h">Simulated</div>
+    <div><i style="background:rgba(255,80,0,0.65)"></i>Simulated fire (burning)</div>
+    <div><i style="background:rgba(30,10,0,0.82)"></i>Simulated burned area</div>
+    <div><i style="background:#2a2725"></i>Burned / charred</div>
+    <div><i style="background:linear-gradient(90deg,#3b3836,#a9a7a3)"></i>Smoke (wind-driven)</div>
+    <div id="llc" class="hide"><div class="h" id="llch">Land cover · no fuel</div>
+      <div><i style="background:rgba(64,156,255,.55)"></i>Water</div><div><i style="background:rgba(205,205,215,.55)"></i>Road</div>
+      <div><i style="background:rgba(230,120,120,.55)"></i>Built-up</div><div><i style="background:rgba(196,170,120,.55)"></i>Bare ground</div>
+      <div><i style="background:repeating-linear-gradient(45deg,transparent 0 2px,rgba(160,160,170,.7) 2px 4px)"></i>Unverified (no data)</div>
+      <div class="sim" id="llcs" style="max-width:190px"></div></div>
+  </div>
+
+  <div id="wind" class="panel">
+    <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#0a0d12" stroke="#2c3644"/>
+      <text x="20" y="8" text-anchor="middle" font-size="6" fill="#8a96a6">N</text>
+      <g id="warrow"><line x1="20" y1="30" x2="20" y2="11" stroke="#8FD3FF" stroke-width="2.4" stroke-linecap="round"/>
+      <polygon points="20,7 15.5,14 24.5,14" fill="#8FD3FF"/></g></svg>
+    <div><div class="v" id="wv"></div><div class="d" id="wd"></div></div>
+  </div>
+
+  <div id="cam" class="panel">
+    <button id="cOver">Overview</button>
+    <button id="cSim">Simulation</button>
+    <button id="cFront">Fire front</button>
+    <button id="cClose">Close-up</button>
+    <button id="cReset">Reset view</button>
+    <button id="cTilt">2D / 3D</button>
+    <button id="cFull">Fullscreen</button>
+    <div class="hint">Ctrl + drag<br>rotate · tilt</div>
+  </div>
+
+  <div id="tools" class="panel">
+    <div id="modes" style="display:flex;flex-direction:column;gap:4px">
+      <button class="mode" data-m="pan" title="Drag the map; the rectangles stay fixed">Pan map</button>
+      <button class="mode" data-m="focus" title="Move / resize the solid blue FOCUS AREA">Edit focus</button>
+      <button class="mode" data-m="domain" title="Move / resize the dashed amber SIMULATION DOMAIN (independent of the focus area)">Edit domain</button>
+      <span class="sep" style="width:100%;height:1px"></span>
+    </div>
+    <button id="bPick" title="Click on the map to add ignition points (inside the simulation domain)">Set ignition on map</button>
+    <button id="bClear" title="Remove the map ignition points">Clear points</button>
+  </div>
+
+  <div id="ctrl" class="panel hide">
+    <button id="bPlay" class="prim">Play</button>
+    <button id="bReset">Reset</button>
+    <span class="sep"></span><span class="lbl">Speed</span>
+    <button class="spd" data-s="0.5">0.5×</button><button class="spd on" data-s="1">1×</button><button class="spd" data-s="2">2×</button><button class="spd" data-s="5">5×</button>
+    <span class="lbl" id="pbinfo" title="Playback only: the fire was computed once for the full simulated time; speed never changes it"></span>
+    <span class="sep"></span><span class="lbl">Simulation time</span>
+    <input id="tl" type="range" min="0" max="0" step="0.001" value="0">
+    <span id="tlab">T+0 s</span>
+  </div>
+  <div id="rinfo" class="panel hide">
+    <div class="t">Regional risk · Google satellite</div>
+    <div class="nm" id="rname"></div>
+    <div class="g">
+      <span>Grid zones</span><span id="rzones"></span>
+      <span>Alert zones</span><span id="ralerts"></span>
+      <span>Risk</span><span>Model prediction</span>
+      <span>Hotspots</span><span id="rhot"></span>
+    </div>
+    <div class="sim" id="rsrc"></div>
+  </div>
+  <div id="rlegend" class="panel hide">
+    <div class="h">Model prediction · fire risk</div>
+    <div class="rbar"></div><div class="rbar-l"><span>0%</span><span>40% alert</span><span>100%</span></div>
+    <div><i style="background:transparent;border:1.5px solid #ff3b3b"></i>Extreme zone</div>
+    <div><i style="background:transparent;border:1.5px solid #ffb347"></i>High zone</div>
+    <div class="h">Satellite detections</div>
+    <div id="rlhot"><i style="background:#4dd0e1;border-radius:50%"></i>NASA FIRMS observed hotspot</div>
+    <div><i style="background:transparent;border:2px solid rgba(255,138,0,.85);border-radius:50%"></i>Zone with active fire nearby</div>
+  </div>
+  <div id="rtools" class="panel hide"><button id="rFit">Fit region</button></div>
+  <div id="rtip" class="panel hide"></div>
+  <div id="toast" class="panel"></div>
+  <div id="err"></div>
+</div>
+<script>
+"use strict";
+// ── Streamlit component protocol (no build step: plain postMessage) ─────────
+function sendMsg(type,data){window.parent.postMessage(Object.assign({isStreamlitMessage:true,type},data||{}),"*");}
+let NONCE=0;
+function emit(value){NONCE+=1;sendMsg("streamlit:setComponentValue",{value:Object.assign({nonce:Date.now()+"-"+NONCE},value),dataType:"json"});}
+function setHeight(h){sendMsg("streamlit:setFrameHeight",{height:h});}
+
+// ── helpers ────────────────────────────────────────────────────────────────
+function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const R=rng(1234567);
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const hash=(i,k)=>{const h=Math.sin(i*12.9898+k*78.233)*43758.5453;return h-Math.floor(h);};
+const $=id=>document.getElementById(id);
+const COMPASS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const compass=d=>COMPASS[Math.round(((d%360)+360)%360/22.5)%16];
+function toast(msg,ms){const n=$('toast');n.textContent=msg;n.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>n.style.display='none',ms||4200);}
+function showErr(msg){const e=$('err');e.innerHTML=msg;e.style.display='flex';}
+window.gm_authFailure=function(){reportMapStatus({ok:false,error:'Google Maps authentication failed (key, Maps JavaScript API or billing)'});showErr('<div><b>Google Maps authentication failed.</b><br>Check that the API key has the Maps JavaScript API enabled, billing is active and the key allows this address (localhost).</div>');};
+
+// ── state (replaced in place when Python sends a new payload) ───────────────
+let P=null, UID=null, MODE=null;
+let LAT0=0,LON0=0,MLAT=111320,MLON=111320, CELL=25, DR=0,DC=0, NC=0, FR0=0,FC0=0,FRN=0,FCN=0;   // domain rows/cols, focus offset/size
+let HALFX=0,HALFY=0, DX0=0,DY0=0;            // focus half extents (m); largest domain half extents (m)
+let DXW=0,DXE=0,DYS=0,DYN=0;                 // domain extent west / east / south / north of the focus centre (m)
+let NFC=null, REG=null, OUTB=null, outbStep=-1;           // non-burnable class per cell (clicks), study-region outline, burned cells outside it
+let IGN=null, OUT=null, INT=null, LC=null, NF=false, BY_IGN=[], BURNED=[], LAST=0, ENDT=0;
+let simT=0, playing=false, speed=1, picking=false, PICKS=[], DRAG=null, DRAGD=null, EDIT='focus', domainRect=null;
+const show={fire:true,smoke:true,embers:true,ash:true,heat:true,grid:true,boundary:true,front:false,wind:true,veg:false,lc:false};
+
+// The domain may extend unequally around the focus centre (adaptive expansion), so cell
+// coordinates use the explicit west / north extents (symmetric domain: DXW = DC*CELL/2).
+function xyOfCell(i){const r=(i/DC)|0,c=i%DC;return [-DXW+(c+0.5)*CELL,DYN-(r+0.5)*CELL];}
+function cellOfXY(x,y){if(x<-DXW||x>=DXE||y<=-DYS||y>DYN)return -1;return Math.floor((DYN-y)/CELL)*DC+Math.floor((x+DXW)/CELL);}
+function ll(x,y){return {lat:LAT0+y/MLAT,lng:LON0+x/MLON};}
+function toXY(lat,lng){return [(lng-LON0)*MLON,(lat-LAT0)*MLAT];}
+
+// CA state of a domain cell at clock t: 0 unburned, 1 burning, 2 recently burned, 3 charred.
+// Times are in frames; with the Phase 3 ROS model they are the exact simulated ignition / burn-out
+// times (fractional), so the fire advances smoothly between frames.
+function cellState(i,t){const a=IGN[i];if(a<0||t<a)return 0;const o=OUT[i];if(t<o)return 1;return (t-o)<3?2:3;}
+// Visual envelope of a burning cell (the CA decides WHICH cell burns WHEN; this only shapes the
+// look): short pre-heat, quick flare-up, full flame while the cell is on the front, die-down after.
+function fireStrength(i,t){
+  const a=IGN[i];if(a<0||t<a-0.25)return 0;
+  if(t<a)return 0.2*(t-(a-0.25))/0.25;
+  const o=OUT[i];
+  if(t<o){const u=t-a;return u<0.3?0.35+0.65*(u/0.3):1;}
+  const s=t-o;return s<1?0.5*Math.pow(1-s,1.6):0;
+}
+function smokeStrength(i,t){
+  const a=IGN[i];if(a<0||t<a)return 0;const o=OUT[i];
+  if(t<o)return 0.5+0.5*clamp((t-a)/0.3,0,1);
+  const s=t-o;return s<3?0.55*Math.pow(1-s/3,1.3):0;
+}
+// cells active at t (about to burn, burning - however long - or still smouldering), from per-frame
+// interval lists built once per payload (a front cell may burn for many frames with the ROS model)
+let ACTIVE=[], activeKey=null, ACT_BY_FRAME=[];
+function activeCells(t){
+  const k=Math.floor(t*4);if(k===activeKey)return ACTIVE;activeKey=k;
+  const f=Math.max(0,Math.floor(t));ACTIVE=[];
+  const src=ACT_BY_FRAME[f]||[];for(const i of src){const a=IGN[i];if(t>=a-0.4&&t<OUT[i]+3)ACTIVE.push(i);}
+  return ACTIVE;
+}
+function buildActive(){
+  ACT_BY_FRAME=[];if(!P||!P.hasRun)return;
+  for(const i of P.cells){const a=IGN[i],o=OUT[i];const f0=Math.max(0,Math.floor(a-0.4)),f1=Math.min(Math.ceil(ENDT)+1,Math.floor(o+3));
+    for(let f=f0;f<=f1;f++)(ACT_BY_FRAME[f]=ACT_BY_FRAME[f]||[]).push(i);}
+}
+
+// slow, smooth spatial noise 0..1 over the ground (metres) - makes some stretches of the fire
+// front hotter / taller and leaves gaps elsewhere (drifts slowly over time)
+function patch(x,y,now){const s=x/23+now*0.00004,u=y/29-now*0.00003;
+  return clamp(0.5+0.28*Math.sin(s*1.7+Math.sin(u*1.3))+0.22*Math.sin(u*2.3+Math.cos(s*0.9)*1.5),0,1);}
+// ── sprites (rendered once, reused) ────────────────────────────────────────
+function sprite(w,h,fn){const c=document.createElement('canvas');c.width=w;c.height=h;fn(c.getContext('2d'),w,h);return c;}
+function radial(stops){return (g,w,h)=>{const r=g.createRadialGradient(w/2,h/2,0,w/2,h/2,w/2);stops.forEach(([o,c])=>r.addColorStop(o,c));g.fillStyle=r;g.fillRect(0,0,w,h);};}
+// Procedural flame: a ragged crown of 2-5 tongues of different heights, curved and leaning
+// (never a clean cone); red rim -> orange body -> yellow-white core, softened with blur.
+function tongue(seed){
+  const r=rng(seed);
+  return sprite(128,192,(g,w,h)=>{
+    const shape=(cx,by,bw,th,wob,curl)=>{
+      const k1=(r()-0.5)*wob,k2=(r()-0.5)*wob,tipx=cx+curl;
+      g.beginPath();g.moveTo(cx-bw,by);
+      g.bezierCurveTo(cx-bw*1.15+k1,by-th*0.32,cx-bw*0.45+k2+curl*0.5,by-th*0.74,tipx,by-th);
+      g.bezierCurveTo(cx+bw*0.45-k2+curl*0.5,by-th*0.74,cx+bw*1.15-k1,by-th*0.32,cx+bw,by);
+      g.quadraticCurveTo(cx,by+bw*0.35,cx-bw,by);g.closePath();
+    };
+    const by=h-10,n=2+((r()*4)|0),tongues=[];
+    for(let j=0;j<n;j++)tongues.push([w/2+(r()-0.5)*w*0.3,w*(0.07+r()*0.08),h*(0.38+r()*0.5),(r()-0.5)*w*0.16]);
+    tongues.sort((a,b)=>b[2]-a[2]);
+    g.filter='blur(3.5px)';
+    for(const [cx,bw,th,cu] of tongues){
+      shape(cx,by,bw,th,w*0.22,cu);
+      const gr=g.createLinearGradient(0,by,0,by-th);
+      gr.addColorStop(0,'rgba(200,50,8,0)');gr.addColorStop(0.06,'rgba(215,65,12,0.78)');gr.addColorStop(0.22,'rgba(255,128,26,0.95)');
+      gr.addColorStop(0.55,'rgba(246,96,16,0.82)');gr.addColorStop(0.85,'rgba(190,40,8,0.45)');gr.addColorStop(1,'rgba(110,15,4,0)');
+      g.fillStyle=gr;g.fill();}
+    g.globalCompositeOperation='lighter';
+    for(const [cx,bw,th,cu] of tongues){
+      shape(cx+(r()-0.5)*3,by-2,bw*0.42,th*0.42,w*0.1,cu*0.4);
+      const gr=g.createLinearGradient(0,by,0,by-th*0.42);
+      gr.addColorStop(0,'rgba(255,248,215,0)');gr.addColorStop(0.1,'rgba(255,248,215,0.9)');gr.addColorStop(0.45,'rgba(255,214,120,0.7)');gr.addColorStop(1,'rgba(255,150,40,0)');
+      g.fillStyle=gr;g.fill();}
+    g.filter='none';g.globalCompositeOperation='destination-in';           // feather sprite borders
+    const mx=g.createLinearGradient(0,0,w,0);mx.addColorStop(0,'rgba(0,0,0,0)');mx.addColorStop(0.16,'#000');mx.addColorStop(0.84,'#000');mx.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=mx;g.fillRect(0,0,w,h);
+    const my=g.createLinearGradient(0,0,0,h);my.addColorStop(0,'rgba(0,0,0,0)');my.addColorStop(0.08,'#000');my.addColorStop(1,'#000');
+    g.fillStyle=my;g.fillRect(0,0,w,h);
+  });
+}
+const SPR={
+  tongue:Array.from({length:16},(_,k)=>tongue(101+k*17)),
+  glow:sprite(128,128,radial([[0,'rgba(255,170,70,1)'],[0.3,'rgba(255,120,30,.6)'],[0.65,'rgba(220,70,10,.2)'],[1,'rgba(150,30,0,0)']])),
+  core:sprite(128,128,radial([[0,'rgba(255,236,170,1)'],[0.18,'rgba(255,190,80,.85)'],[0.45,'rgba(255,110,25,.45)'],[1,'rgba(200,40,0,0)']])),
+  bed:sprite(128,128,radial([[0,'rgba(255,160,60,.9)'],[0.25,'rgba(225,72,16,.72)'],[0.6,'rgba(125,22,4,.36)'],[1,'rgba(50,8,0,0)']])),
+  spark:sprite(16,16,radial([[0,'rgba(255,246,210,1)'],[0.3,'rgba(255,170,60,.95)'],[0.65,'rgba(255,90,20,.35)'],[1,'rgba(200,40,0,0)']])),
+  glint:sprite(16,16,radial([[0,'rgba(255,240,190,1)'],[0.35,'rgba(255,140,40,.9)'],[1,'rgba(200,40,0,0)']])),
+  ash:[],smoke:[],smokeShadow:[],tree:[],treeLit:null,treeBurnt:null
+};
+// ash: small irregular dark-grey flakes (not round white "snow")
+for(let k=0;k<5;k++){const r2=rng(500+k);SPR.ash.push(sprite(12,12,(g,s)=>{
+  g.fillStyle=`rgba(${110+k*8},${106+k*8},${102+k*8},0.95)`;g.beginPath();
+  const n=5+((r2()*3)|0);for(let j=0;j<n;j++){const a=j/n*Math.PI*2,rad=s*(0.18+r2()*0.28);const x=s/2+Math.cos(a)*rad,y=s/2+Math.sin(a)*rad*0.6;j?g.lineTo(x,y):g.moveTo(x,y);}
+  g.closePath();g.fill();}));}
+// Smoke: fractal clusters of soft lobes, lit from the north-west, pre-tinted in five shades:
+// charcoal (dense, over intense fire) -> dark grey -> grey -> light grey -> haze.
+const SHADES=[[84,78,74],[116,111,106],[152,148,144],[188,185,181],[218,216,213]];
+const PUFFS=[];
+for(let k=0;k<10;k++){const r2=rng(77+k*13),blobs=[];
+  for(let j=0;j<38;j++){const a=r2()*Math.PI*2,d=Math.pow(r2(),0.7)*0.28,rad=0.06+r2()*0.2;blobs.push([0.5+Math.cos(a)*d,0.5+Math.sin(a)*d,rad,0.12+r2()*0.17,(r2()-0.5)*26]);}
+  PUFFS.push(blobs);}
+function puff(blobs,rgb,alphaMul){
+  return sprite(128,128,(g,s)=>{for(const [x,y,rad,al,dv] of blobs){
+    const X=x*s,Y=y*s,RR=rad*s,gr=g.createRadialGradient(X-RR*0.35,Y-RR*0.35,0,X,Y,RR);
+    const hi=rgb.map(v=>clamp(Math.round(v+dv+30),0,255)),lo=rgb.map(v=>clamp(Math.round(v+dv-28),0,255));
+    gr.addColorStop(0,`rgba(${hi[0]},${hi[1]},${hi[2]},${al*alphaMul})`);gr.addColorStop(0.55,`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${al*alphaMul*0.72})`);
+    gr.addColorStop(0.85,`rgba(${lo[0]},${lo[1]},${lo[2]},${al*alphaMul*0.3})`);gr.addColorStop(1,`rgba(${lo[0]},${lo[1]},${lo[2]},0)`);
+    g.fillStyle=gr;g.fillRect(0,0,s,s);}});
+}
+SHADES.forEach(rgb=>SPR.smoke.push(PUFFS.map(b=>puff(b,rgb,1.7))));
+SPR.smokeShadow=PUFFS.map(b=>puff(b,[0,0,0],1.2));
+function canopy(seed,base,light,rim){const r2=rng(seed);
+  return sprite(48,48,(g,s)=>{const lobes=3+((r2()*4)|0);
+    for(let j=0;j<lobes;j++){const a=r2()*Math.PI*2,d=s*0.12*r2(),x=s/2+Math.cos(a)*d,y=s/2+Math.sin(a)*d,rad=s*(0.2+r2()*0.14);
+      const gr=g.createRadialGradient(x-rad*0.35,y-rad*0.35,rad*0.1,x,y,rad);
+      gr.addColorStop(0,light);gr.addColorStop(0.55,base);gr.addColorStop(0.9,rim);gr.addColorStop(1,'rgba(0,0,0,0)');
+      g.fillStyle=gr;g.beginPath();g.arc(x,y,rad,0,Math.PI*2);g.fill();}});}
+[['#2c4a26','#4f7a3a','#16260f'],['#355a2b','#5f8c43','#1a2c12'],['#28452e','#4b7350','#132416'],['#3d5a2c','#6b8a45','#1e2c12']]
+  .forEach((c,k)=>SPR.tree.push(canopy(900+k*7,c[0],c[1],c[2])));
+SPR.treeLit=canopy(31,'#8a3a12','#ffb347','#3a1206');SPR.treeBurnt=canopy(57,'#221d1a','#3a332e','#0d0b0a');
+
+// ── particles (pooled; nothing allocated per frame) ─────────────────────────
+const CAP={flame:1600,smoke:300,ember:110,ash:60,streak:60,emitters:320};   // fire first, medium smoke
+function makePool(n){const a=[];for(let i=0;i<n;i++)a.push({on:false});return a;}
+const POOL={flame:makePool(CAP.flame),smoke:makePool(CAP.smoke),ember:makePool(CAP.ember),ash:makePool(CAP.ash),streak:makePool(CAP.streak)};
+const LIVE={flame:0,smoke:0,ember:0,ash:0,streak:0};
+const FREE={flame:0,smoke:0,ember:0,ash:0,streak:0};
+function spawn(kind,o){const p=POOL[kind],n=p.length;for(let k=0;k<n;k++){const j=(FREE[kind]+k)%n;if(!p[j].on){Object.assign(p[j],o);p[j].on=true;p[j].age=0;LIVE[kind]++;FREE[kind]=(j+1)%n;return p[j];}}return null;}
+let ACC=null;
+function clearParticles(){for(const k in POOL){POOL[k].forEach(p=>p.on=false);LIVE[k]=0;}if(ACC)for(const k in ACC)ACC[k].fill(0);smokeAcc=new Map();}
+let smokeAcc=new Map();
+
+// ── map, projection, canvases ──────────────────────────────────────────────
+let map=null,proj=null,focusRect=null,hotCircles=[],regLines=[],gmReady=false;
+let H=null,PXM=1,TILTF=0.2,ZOOM=12,budget=1.0;
+// 3-D camera (vector maps): Google's MVP matrix for the frame being drawn, anchored at the focus centre
+let ctx=null,scarView=true,mapIdle=false,MVP=null,GLOV=null,IS_VECTOR=false,MVP_BAD=false,MVP_CHECKED=false,MVP_FAILS=0,TILT=0,STYF=0,UPS=0,UPF=0,pendingDt=0;
+const cvs=$('fx'),cvsG=$('gridfx'),ctxG=cvsG.getContext('2d'),cvsS=$('scarfx'),ctxS=cvsS.getContext('2d'),cvsT=$('statefx'),ctxT=cvsT.getContext('2d'),cvsL=$('lightfx'),ctxL=cvsL.getContext('2d');ctx=cvs.getContext('2d');const ctxFx=ctx;
+const DPR0=Math.min(window.devicePixelRatio||1,1.5);let RS=1,DPR=DPR0,CW=0,CH=0;
+function resize(){const w=$('wrap');CW=w.clientWidth;CH=w.clientHeight;DPR=DPR0*RS;
+  for(const c of [cvs,cvsG,cvsS,cvsT,cvsL]){c.width=Math.round(CW*DPR);c.height=Math.round(CH*DPR);c.style.width=CW+'px';c.style.height=CH+'px';}gridDirty=true;scarView=true;if(GLOV)GLOV.requestRedraw();}
+new ResizeObserver(resize).observe($('wrap'));
+function solveH(src,dst){
+  const A=[],b=[];
+  for(let k=0;k<4;k++){const [x,y]=src[k],[u,v]=dst[k];A.push([x,y,1,0,0,0,-u*x,-u*y]);b.push(u);A.push([0,0,0,x,y,1,-v*x,-v*y]);b.push(v);}
+  for(let i=0;i<8;i++){let m=i;for(let r=i+1;r<8;r++)if(Math.abs(A[r][i])>Math.abs(A[m][i]))m=r;
+    [A[i],A[m]]=[A[m],A[i]];[b[i],b[m]]=[b[m],b[i]];const d=A[i][i];if(Math.abs(d)<1e-12)return null;
+    for(let r=0;r<8;r++){if(r===i)continue;const f=A[r][i]/d;if(!f)continue;for(let c=i;c<8;c++)A[r][c]-=f*A[i][c];b[r]-=f*b[i];}}
+  return b.map((v,i)=>v/A[i][i]);
+}
+// ground point (metres east, north) -> screen [x, y, depth scale]; depth scale = 1 at the focus centre
+function W2S(x,y){if(MVP)return S3(x,y,0);const h=H,w=h[6]*x+h[7]*y+1;return [(h[0]*x+h[1]*y+h[2])/w,(h[3]*x+h[4]*y+h[5])/w,1/w];}
+// 3-D point (east, north, up; metres) -> screen through the map camera [x, y, depth scale]
+let W0=1;
+function S3(x,y,z){const m=MVP,cw=m[3]*x+m[7]*y+m[11]*z+m[15];if(cw<=1e-6)return [NaN,NaN,0];
+  const cx=m[0]*x+m[4]*y+m[8]*z+m[12],cy=m[1]*x+m[5]*y+m[9]*z+m[13];
+  return [(cx/cw+1)*0.5*CW,(1-cy/cw)*0.5*CH,W0/cw];}
+// point at height z above the ground; u = extra screen lift per metre used only near top-down views
+// (where the true vertical collapses to a point), so 2D keeps its readable look
+function SZ(x,y,z,u){const a=MVP?S3(x,y,z):W2S(x,y);a[1]-=z*u*a[2];return a;}
+let lastHkey='';
+function updateProjection(){
+  if(!P)return false;
+  const E=Math.max(DXW,DXE,DYS,DYN,800)*1.6,src=[[-E,-E],[E,-E],[E,E],[-E,E]],dst=[];
+  TILT=(map&&map.getTilt&&map.getTilt())||0;
+  if(MVP){
+    // exact camera of the frame being drawn: every point (ground or above it) goes through S3
+    W0=MVP[15];H=H||[1,0,0,0,1,0,0,0];
+    for(const [x,y] of src){const q=S3(x,y,0);dst.push([isFinite(q[0])?q[0]:-1e6,isFinite(q[1])?q[1]:-1e6]);}
+  }else{
+    if(!proj)return false;
+    for(const [x,y] of src){const p=proj.fromLatLngToContainerPixel(new google.maps.LatLng(ll(x,y)));if(!p)return false;dst.push([p.x,p.y]);}
+    H=solveH(src,dst);if(!H)return false;
+  }
+  const a=W2S(0,0),c=W2S(20,0);PXM=Math.hypot(c[0]-a[0],c[1]-a[1])/20;
+  const st=Math.sin(TILT*Math.PI/180);TILTF=0.22+0.78*st;
+  STYF=MVP?PXM*Math.max(0,1-st):0;
+  UPS=MVP?0.5*STYF:PXM*Math.max(0.5,TILTF);    // smoke / embers / ash lift
+  UPF=MVP?STYF:PXM;                              // flame lift
+  ZOOM=(map&&map.getZoom())||12;
+  const d2=W2S(0,20),key=dst.concat([a,c,d2]).map(p=>(+p[0]).toFixed(1)+','+(+p[1]).toFixed(1)).join(';');if(key!==lastHkey){lastHkey=key;gridDirty=true;scarView=true;}
+  return true;
+}
+// One-time sanity check of the WebGL camera against the map projection (top-down only):
+// if they disagree, fall back to the projection-based homography instead of drawing wrong.
+function checkMVP(){
+  if(MVP_CHECKED||!proj||!MVP||TILT>0.5||camAnim||!mapIdle)return;
+  let err=0,dist=0;
+  for(const [x,y] of [[300,0],[0,300],[-200,-250]]){
+    const a=S3(x,y,0),p=proj.fromLatLngToContainerPixel(new google.maps.LatLng(ll(x,y)));if(!p)return;
+    const o=S3(0,0,0);err=Math.max(err,Math.hypot(a[0]-p.x,a[1]-p.y));dist=Math.max(dist,Math.hypot(a[0]-o[0],a[1]-o[1]));}
+  if(err<=6+0.03*dist){MVP_CHECKED=true;return;}
+  if(++MVP_FAILS>=3){MVP_BAD=true;MVP=null;console.warn('fire_map: WebGL camera does not match the map projection; using the 2D projection.');}
+}
+function onScreen(s,m){return s[0]>-m&&s[1]>-m&&s[0]<CW+m&&s[1]<CH+m;}
+
+// ── computational grid + domain outline (redrawn only when the view changes) ─
+let gridDirty=true;
+function drawGrid(){
+  ctxG.setTransform(1,0,0,1,0,0);ctxG.clearRect(0,0,cvsG.width,cvsG.height);
+  if(!H)return;ctxG.setTransform(DPR,0,0,DPR,0,0);
+  const cellPx=CELL*PXM, line=(x0,y0,x1,y1)=>{const a=W2S(x0,y0),b=W2S(x1,y1);ctxG.moveTo(a[0],a[1]);ctxG.lineTo(b[0],b[1]);};
+  if(show.grid&&cellPx>=4){
+    // CA grid: thin semi-transparent light lines over every cell of the SIMULATION DOMAIN only (never outside it)
+    ctxG.strokeStyle='rgba(235,242,255,'+(cellPx>=9?0.34:0.22)+')';ctxG.lineWidth=0.7;ctxG.beginPath();
+    for(let c=0;c<=DC;c++){const x=-DXW+c*CELL;line(x,-DYS,x,DYN);}
+    for(let r=0;r<=DR;r++){const y=DYN-r*CELL;line(-DXW,y,DXE,y);}
+    ctxG.stroke();
+  }
+  if(show.lc&&LC){                       // land-cover cells the fire cannot burn (simulation input)
+    const col={1:'rgba(196,170,120,0.42)',2:'rgba(64,156,255,0.45)',3:'rgba(230,120,120,0.45)',4:'rgba(205,205,215,0.45)',5:'rgba(150,150,160,0.30)'};
+    for(const k of [1,2,3,4,5]){ctxG.fillStyle=col[k];ctxG.beginPath();
+      for(let i=0;i<NC;i++){if(LC[i]!==k)continue;const [x,y]=xyOfCell(i),h=CELL/2;
+        const a=W2S(x-h,y-h),b=W2S(x+h,y-h),c=W2S(x+h,y+h),d=W2S(x-h,y+h);
+        ctxG.moveTo(a[0],a[1]);ctxG.lineTo(b[0],b[1]);ctxG.lineTo(c[0],c[1]);ctxG.lineTo(d[0],d[1]);ctxG.closePath();}
+      ctxG.fill();}}
+  if(OUTB&&OUTB.length&&P.hasRun){       // burned cells in the REGIONAL EXTENSION (outside the Bandipur boundary)
+    ctxG.strokeStyle='rgba(198,243,107,0.55)';ctxG.lineWidth=1;ctxG.beginPath();
+    for(const i of OUTB){if(IGN[i]<0||simT<IGN[i])continue;const [x,y]=xyOfCell(i),h=CELL/2,a=W2S(x-h,y-h),b=W2S(x+h,y+h);
+      ctxG.moveTo(a[0],a[1]);ctxG.lineTo(b[0],b[1]);}
+    ctxG.stroke();}
+  if(show.boundary){
+    // SIMULATION DOMAIN (the CA grid): dashed amber - distinct from the solid blue focus area
+    ctxG.setLineDash([9,6]);ctxG.strokeStyle='rgba(10,10,10,0.55)';ctxG.lineWidth=3.4;ctxG.beginPath();
+    line(-DXW,-DYS,DXE,-DYS);line(DXE,-DYS,DXE,DYN);line(DXE,DYN,-DXW,DYN);line(-DXW,DYN,-DXW,-DYS);ctxG.stroke();
+    ctxG.strokeStyle='rgba(255,193,92,0.95)';ctxG.lineWidth=1.8;ctxG.stroke();ctxG.setLineDash([]);
+    if(DRAGD){ctxG.setLineDash([6,4]);ctxG.strokeStyle='rgba(255,213,128,0.95)';ctxG.lineWidth=2.2;ctxG.beginPath();
+      const q=DRAGD;line(q.x0,q.y0,q.x1,q.y0);line(q.x1,q.y0,q.x1,q.y1);line(q.x1,q.y1,q.x0,q.y1);line(q.x0,q.y1,q.x0,q.y0);ctxG.stroke();ctxG.setLineDash([]);}
+    if(DRAG&&!P.domainIndependent){       // live preview while the focus box is dragged / resized (no rerun)
+      const dw=P.domainSize?Math.max(P.domainSize[0],DRAG.w):DRAG.w+(DXW+DXE-2*HALFX),dh=P.domainSize?Math.max(P.domainSize[1],DRAG.h):DRAG.h+(DYN+DYS-2*HALFY);
+      const x0=DRAG.x-dw/2,x1=DRAG.x+dw/2,y0=DRAG.y-dh/2,y1=DRAG.y+dh/2;
+      ctxG.setLineDash([4,5]);ctxG.strokeStyle='rgba(255,193,92,0.6)';ctxG.lineWidth=1.4;ctxG.beginPath();
+      line(x0,y0,x1,y0);line(x1,y0,x1,y1);line(x1,y1,x0,y1);line(x0,y1,x0,y0);ctxG.stroke();ctxG.setLineDash([]);}
+    if(P.initialDomain&&P.expansions&&P.expansions.length){     // the initial domain, for reference only
+      const q=P.initialDomain;ctxG.setLineDash([2,5]);ctxG.strokeStyle='rgba(143,211,255,0.45)';ctxG.beginPath();
+      line(-q.xw,-q.ys,q.xe,-q.ys);line(q.xe,-q.ys,q.xe,q.yn);line(q.xe,q.yn,-q.xw,q.yn);line(-q.xw,q.yn,-q.xw,-q.ys);ctxG.stroke();ctxG.setLineDash([]);}
+    const lab=W2S(-DXW,DYN);ctxG.font='700 10.5px Segoe UI, sans-serif';
+    const txt='SIMULATION DOMAIN '+(MODE==='setup'?'(initial) ':'')+Math.round(DC*CELL)+' × '+Math.round(DR*CELL)+' m — ignition allowed anywhere inside';
+    if(onScreen(lab,0)){const tw=ctxG.measureText(txt).width;ctxG.fillStyle='rgba(10,13,18,0.72)';ctxG.fillRect(lab[0]+2,lab[1]-17,tw+8,14);
+      ctxG.fillStyle='rgba(255,203,112,0.98)';ctxG.fillText(txt,lab[0]+6,lab[1]-6);}
+    const fl=W2S(-HALFX,HALFY);if(onScreen(fl,0)&&(Math.abs(fl[1]-lab[1])>14||Math.abs(fl[0]-lab[0])>40)){
+      const t2='FOCUS AREA '+Math.round(2*HALFX)+' × '+Math.round(2*HALFY)+' m',tw2=ctxG.measureText(t2).width;
+      ctxG.fillStyle='rgba(10,13,18,0.72)';ctxG.fillRect(fl[0]+2,fl[1]+3,tw2+8,14);ctxG.fillStyle='rgba(143,211,255,0.98)';ctxG.fillText(t2,fl[0]+6,fl[1]+14);}}
+  gridDirty=false;
+}
+
+// ── burn scar: organic charred ground, rendered off-screen in metre space ───
+// Overlapping soft char blobs per cell -> one continuous organic scar (never tiles). Multiply-
+// blended with the satellite image, so the real ground texture stays visible underneath.
+let scar=null,sctx=null,SCAR_RES=1,SCAR_EX=0,SCAR_EY=0,scarOld=null,soctx=null,oldUpTo=-1,scarT=-99,scarDirty=true;
+function setupScar(){
+  SCAR_EX=DX0;SCAR_EY=DY0;SCAR_RES=clamp(2048/Math.max(2*DX0,2*DY0),0.25,1.6);   // DX0/DY0 = largest half extents
+  const w=Math.round(2*SCAR_EX*SCAR_RES),h=Math.round(2*SCAR_EY*SCAR_RES);
+  scar=document.createElement('canvas');scar.width=w;scar.height=h;sctx=scar.getContext('2d');
+  scarOld=document.createElement('canvas');scarOld.width=w;scarOld.height=h;soctx=scarOld.getContext('2d');oldUpTo=-1;scarDirty=true;
+  setupState();
+}
+function scarBlobs(g,i,c,alpha){
+  const [x,y]=xyOfCell(i),toPx=(xx,yy)=>[(xx+SCAR_EX)*SCAR_RES,(SCAR_EY-yy)*SCAR_RES];
+  for(let k=0;k<4;k++){
+    const ox=(hash(i,k)-0.5)*CELL*0.8,oy=(hash(i,k+9)-0.5)*CELL*0.8,rad=Math.max(1.5,CELL*(0.5+0.34*hash(i,k+17))*SCAR_RES);
+    const v=0.85+0.3*hash(i,k+23),cc=c.map(z=>Math.round(clamp(z*v,0,255)));
+    const [px,py]=toPx(x+ox,y+oy),gr=g.createRadialGradient(px,py,0,px,py,rad);
+    gr.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);gr.addColorStop(0.6,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*0.8})`);gr.addColorStop(1,`rgba(${cc[0]},${cc[1]},${cc[2]},0)`);
+    g.fillStyle=gr;g.fillRect(px-rad,py-rad,2*rad,2*rad);}
+}
+function renderScar(t){
+  // fully charred cells accumulate on scarOld (drawn once each); recent cells are redrawn
+  const fullBefore=Math.floor(t)-3;
+  if(fullBefore<oldUpTo){soctx.clearRect(0,0,scarOld.width,scarOld.height);oldUpTo=-1;}
+  for(let s=oldUpTo+1;s<=fullBefore;s++){for(const i of (BY_OUT[s]||[]))scarBlobs(soctx,i,[70,62,56],0.95);}
+  oldUpTo=Math.max(oldUpTo,fullBefore);
+  sctx.clearRect(0,0,scar.width,scar.height);sctx.drawImage(scarOld,0,0);
+  for(const i of activeCells(t)){
+    const a=IGN[i];if(t<a)continue;const o=OUT[i],burning=t<o,prog=burning?clamp((t-a)/(o-a),0,1):1,age=burning?0:t-o;
+    if(!burning&&age>=3)continue;
+    const fresh=clamp(1-age/3,0,1);
+    const c=burning?[150-80*prog,95-50*prog,70-35*prog]:[40+30*(1-fresh),30+32*(1-fresh),26+30*(1-fresh)];
+    scarBlobs(sctx,i,c,burning?0.45+0.45*prog:0.95);
+  }
+  scarT=t;scarDirty=false;
+}
+function drawScar(){
+  ctxS.setTransform(1,0,0,1,0,0);ctxS.clearRect(0,0,cvsS.width,cvsS.height);
+  if(!P||!P.hasRun||!H)return;
+  if(FIRE_BOX)mapGround(ctxS,scar,FIRE_BOX);
+}
+// draw an off-screen canvas covering the ground rectangle [-SCAR_EX,SCAR_EX] x [-SCAR_EY,SCAR_EY] (metres)
+// onto the screen, glued to the map ground in 2D and tilted 3D. Only the part `box` [x0,x1,y0,y1] (metres)
+// that holds content is mapped. Top-down: one affine draw. Tilted: a perspective-correct triangle mesh whose
+// triangles are small (about 2 cells) so linear texture mapping inside each one cannot visibly drift off the
+// terrain; the same mesh is used for every tilt > 0, so switching 2D <-> 3D never jumps.
+function mapGround(g,img,box){
+  const S=img.width,T=img.height,rx=S/(2*SCAR_EX),ry=T/(2*SCAR_EY);
+  let [bx0,bx1,by0,by1]=box||[-SCAR_EX,SCAR_EX,-SCAR_EY,SCAR_EY];
+  bx0=Math.max(bx0,-SCAR_EX);bx1=Math.min(bx1,SCAR_EX);by0=Math.max(by0,-SCAR_EY);by1=Math.min(by1,SCAR_EY);
+  if(bx1<=bx0||by1<=by0)return;
+  const src=(x,y)=>[(x+SCAR_EX)*rx,(SCAR_EY-y)*ry];
+  if(TILT<0.05){            // exactly top-down: the ground mapping is affine -> one draw
+    const p0=W2S(-SCAR_EX,SCAR_EY),p1=W2S(SCAR_EX,SCAR_EY),p2=W2S(-SCAR_EX,-SCAR_EY);
+    if(![p0,p1,p2].every(p=>isFinite(p[0])&&isFinite(p[1])))return;
+    g.save();g.setTransform(DPR*(p1[0]-p0[0])/S,DPR*(p1[1]-p0[1])/S,DPR*(p2[0]-p0[0])/T,DPR*(p2[1]-p0[1])/T,DPR*p0[0],DPR*p0[1]);
+    const [sx0,sy0]=src(bx0,by1),[sx1,sy1]=src(bx1,by0),w=Math.min(S,sx1)-Math.max(0,sx0),h=Math.min(T,sy1)-Math.max(0,sy0);
+    if(w>0&&h>0)g.drawImage(img,Math.max(0,sx0),Math.max(0,sy0),w,h,Math.max(0,sx0),Math.max(0,sy0),w,h);
+    g.restore();return;}
+  const NX=clamp(Math.ceil((bx1-bx0)/(2*CELL)),4,28),NY=clamp(Math.ceil((by1-by0)/(2*CELL)),4,28),G=[];
+  for(let j=0;j<=NY;j++){const row=[];for(let i=0;i<=NX;i++){const x=bx0+(bx1-bx0)*i/NX,y=by1-(by1-by0)*j/NY;row.push([W2S(x,y),src(x,y)]);}G.push(row);}
+  const tri=(A,B,C)=>{
+    const da=A[0],db=B[0],dc=C[0],sa=A[1],sb=B[1],sc=C[1];
+    const cx=(da[0]+db[0]+dc[0])/3,cy=(da[1]+db[1]+dc[1])/3,ex=p=>{const dx=p[0]-cx,dy=p[1]-cy,l=Math.hypot(dx,dy)||1;return [p[0]+dx/l*0.6,p[1]+dy/l*0.6];};
+    const P1=ex(da),P2=ex(db),P3=ex(dc);
+    const d=(sb[0]-sa[0])*(sc[1]-sa[1])-(sc[0]-sa[0])*(sb[1]-sa[1]);if(Math.abs(d)<1e-9)return;
+    g.save();g.setTransform(DPR,0,0,DPR,0,0);g.beginPath();g.moveTo(P1[0],P1[1]);g.lineTo(P2[0],P2[1]);g.lineTo(P3[0],P3[1]);g.closePath();g.clip();
+    const a=((db[0]-da[0])*(sc[1]-sa[1])-(dc[0]-da[0])*(sb[1]-sa[1]))/d,b=((db[1]-da[1])*(sc[1]-sa[1])-(dc[1]-da[1])*(sb[1]-sa[1]))/d;
+    const c=((dc[0]-da[0])*(sb[0]-sa[0])-(db[0]-da[0])*(sc[0]-sa[0]))/d,e=((dc[1]-da[1])*(sb[0]-sa[0])-(db[1]-da[1])*(sc[0]-sa[0]))/d;
+    g.setTransform(DPR*a,DPR*b,DPR*c,DPR*e,DPR*(da[0]-a*sa[0]-c*sa[1]),DPR*(da[1]-b*sa[0]-e*sa[1]));
+    const x0=Math.max(0,Math.min(sa[0],sb[0],sc[0])-2),y0=Math.max(0,Math.min(sa[1],sb[1],sc[1])-2);
+    const w=Math.min(S,Math.max(sa[0],sb[0],sc[0])+2)-x0,h=Math.min(T,Math.max(sa[1],sb[1],sc[1])+2)-y0;
+    if(w>0&&h>0)g.drawImage(img,x0,y0,w,h,x0,y0,w,h);g.restore();};
+  const ok=q=>q[0][2]>0&&isFinite(q[0][0])&&isFinite(q[0][1]);
+  for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){
+    const g00=G[j][i],g10=G[j][i+1],g01=G[j+1][i],g11=G[j+1][i+1];
+    if(!(ok(g00)&&ok(g10)&&ok(g01)&&ok(g11)))continue;
+    const xs=[g00,g10,g01,g11].map(q=>q[0][0]),ys=[g00,g10,g01,g11].map(q=>q[0][1]);
+    if(Math.max(...xs)<0||Math.min(...xs)>CW||Math.max(...ys)<0||Math.min(...ys)>CH)continue;   // off screen
+    tri(g00,g10,g11);tri(g00,g11,g01);}
+}
+
+// ── CA cell-state layer as ONE continuous organic ground surface (no per-cell squares) ──
+// The CA state (one value per cell) is written to a 1-px-per-cell image, bilinearly up-sampled and
+// slightly blurred in metre space, then contoured at the 0.5 level with a small, fixed sub-cell noise.
+// The contour follows the simulated cell boundary (within about half a cell) with rounded, irregular
+// edges instead of tiles. VISUAL approximation of the simulated perimeter only: no cell is added or
+// removed, and the colours are the CA state colours:
+//   burning rgba(255,80,0,0.65) · burned rgba(30,10,0,0.82) · non-fuel rgba(80,100,140,0.30) · unburned none
+let stLow=null,stLowCtx=null,stLowImg=null,stF=null,stFCtx=null,stDyn=null,stDynCtx=null,stAll=null,stAllCtx=null,
+    nfC=null,stNoise=null,FRES=1,stW=0,stH=0,stateT=-99,FIRE_BOX=null,NF_BOX=null;
+function setupState(){
+  FRES=Math.min(SCAR_RES,clamp(1100/Math.max(2*DX0,2*DY0),0.05,8/CELL));      // <= 8 px per cell, <= ~1100 px
+  stW=Math.max(1,Math.round(2*SCAR_EX*FRES));stH=Math.max(1,Math.round(2*SCAR_EY*FRES));
+  const mk=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
+  stLow=mk(DC,DR);stLowCtx=stLow.getContext('2d');stLowImg=stLowCtx.createImageData(DC,DR);
+  stF=mk(stW,stH);stFCtx=stF.getContext('2d',{willReadFrequently:true});
+  stDyn=mk(stW,stH);stDynCtx=stDyn.getContext('2d');stAll=mk(stW,stH);stAllCtx=stAll.getContext('2d');nfC=mk(stW,stH);
+  // sub-cell value noise (two octaves, ~0.8 and ~2.2 cells), fixed per place -> stable, organic edges
+  const cpx=CELL*FRES,vn=(x,y,per,sd)=>{const gx=x/per,gy=y/per,x0=Math.floor(gx),y0=Math.floor(gy),fx=gx-x0,fy=gy-y0,
+      sx=fx*fx*(3-2*fx),sy=fy*fy*(3-2*fy),h=(a,b)=>hash(a*7919+b*104729,sd);
+      return (h(x0,y0)*(1-sx)+h(x0+1,y0)*sx)*(1-sy)+(h(x0,y0+1)*(1-sx)+h(x0+1,y0+1)*sx)*sy;};
+  stNoise=new Float32Array(stW*stH);
+  for(let y=0;y<stH;y++)for(let x=0;x<stW;x++)
+    stNoise[y*stW+x]=0.34*(vn(x,y,Math.max(1.2,0.8*cpx),11)-0.5)+0.22*(vn(x,y,Math.max(2,2.2*cpx),37)-0.5);
+  // static non-fuel layer (land-cover input, never changes during a run)
+  const nctx=nfC.getContext('2d');nctx.clearRect(0,0,stW,stH);
+  if(LC){const d=stLowImg.data;d.fill(0);for(let i=0;i<NC;i++){const k=i*4;d[k+3]=255;if(LC[i])d[k+2]=255;}
+    const out=contourField(true,null);if(out)nctx.putImageData(out.img,out.x0,out.y0);}
+  NF_BOX=null;if(LC){for(let i=0;i<NC;i++)if(LC[i]){NF_BOX=[-DXW,DXE,-DYS,DYN];break;}}
+  stateT=-99;FIRE_BOX=null;
+}
+const sstep=(e0,e1,v)=>{const x=clamp((v-e0)/(e1-e0),0,1);return x*x*(3-2*x);};
+// up-sample stLowImg onto the metre-space field and return the coloured, contoured pixels inside the
+// cell bounding box `box` [r0,r1,c0,c1] (or the whole domain). nonFuel: blue channel only.
+function contourField(nonFuel,box){
+  stLowCtx.putImageData(stLowImg,0,0);
+  const cpx=CELL*FRES,ox=(SCAR_EX-DXW)*FRES,oy=(SCAR_EY-DYN)*FRES;
+  stFCtx.setTransform(1,0,0,1,0,0);stFCtx.clearRect(0,0,stW,stH);stFCtx.imageSmoothingEnabled=true;
+  stFCtx.imageSmoothingQuality='high';
+  if(cpx>=2.5){try{stFCtx.filter='blur('+(0.3*cpx).toFixed(2)+'px)';}catch(e){}}
+  stFCtx.drawImage(stLow,ox,oy,DC*cpx,DR*cpx);
+  try{stFCtx.filter='none';}catch(e){}
+  let x0=Math.floor(ox),y0=Math.floor(oy),x1=Math.ceil(ox+DC*cpx),y1=Math.ceil(oy+DR*cpx);
+  if(box){x0=Math.floor(ox+(box[2]-2)*cpx);x1=Math.ceil(ox+(box[3]+3)*cpx);y0=Math.floor(oy+(box[0]-2)*cpx);y1=Math.ceil(oy+(box[1]+3)*cpx);}
+  x0=clamp(x0,0,stW);x1=clamp(x1,0,stW);y0=clamp(y0,0,stH);y1=clamp(y1,0,stH);
+  const w=x1-x0,h=y1-y0;if(w<=0||h<=0)return null;
+  const src=stFCtx.getImageData(x0,y0,w,h).data,img=new ImageData(w,h),o=img.data,aw=Math.max(0.035,0.5/cpx);
+  for(let y=0;y<h;y++){const nrow=(y+y0)*stW+x0;for(let x=0;x<w;x++){const k=(y*w+x)*4;if(src[k+3]<8)continue;
+    const n=stNoise[nrow+x];
+    if(nonFuel){
+      const a=sstep(0.5-aw,0.5+aw,src[k+2]/255+n);if(a<=0.003)continue;
+      o[k]=80;o[k+1]=100;o[k+2]=140;o[k+3]=Math.round(255*0.30*a);continue;}
+    // affected (burning + burned) footprint, and the burning band inside it
+    // feathered outer edge (blends into the forest); the burning band is a soft, low-opacity heat tint
+    // under the flames (peak 0.65 x 0.5) so the flames and glow above it carry the fire, not a flat fill
+    const A=sstep(0.5-2.2*aw,0.5+2.2*aw,src[k+1]/255+n);if(A<=0.003)continue;
+    const B=Math.min(A,sstep(0.18,0.9,src[k]/255+0.8*n)),f=B/A;
+    const al=0.82*(1+0.2*n)*(1-f)+0.65*0.5*f;              // faint scorch variation in the charred interior
+    o[k]=Math.round(30+225*f);o[k+1]=Math.round(10+70*f);o[k+2]=0;o[k+3]=Math.round(255*clamp(al,0,1)*A);}}
+  return {img,x0,y0};
+}
+function renderState(t){
+  if(!stLow||!P||!P.cells)return;
+  const d=stLowImg.data;d.fill(0);for(let k=3;k<d.length;k+=4)d[k]=255;
+  let r0=1e9,r1=-1,c0=1e9,c1=-1;
+  for(const i of P.cells){const a=IGN[i];if(a<0||t<a)continue;const k=i*4;d[k+1]=255;if(t<OUT[i])d[k]=255;
+    const r=(i/DC)|0,c=i%DC;if(r<r0)r0=r;if(r>r1)r1=r;if(c<c0)c0=c;if(c>c1)c1=c;}
+  stDynCtx.clearRect(0,0,stW,stH);
+  if(r1>=0){const out=contourField(false,[r0,r1,c0,c1]);if(out)stDynCtx.putImageData(out.img,out.x0,out.y0);
+    FIRE_BOX=[-DXW+(c0-3)*CELL,-DXW+(c1+4)*CELL,DYN-(r1+4)*CELL,DYN-(r0-3)*CELL];}else FIRE_BOX=null;
+  stAllCtx.clearRect(0,0,stW,stH);stAllCtx.drawImage(nfC,0,0);stAllCtx.drawImage(stDyn,0,0);stateT=t;
+}
+function drawState(){
+  ctxT.setTransform(1,0,0,1,0,0);ctxT.clearRect(0,0,cvsT.width,cvsT.height);
+  if(!P||!P.hasRun||!H||!show.fire||!stAll)return;
+  const bx=NF_BOX||FIRE_BOX;if(bx)mapGround(ctxT,stAll,bx);
+}
+
+// ── fire-front topology + burning clusters (recomputed only when the CA step changes) ──
+let FRONT=new Map(),PERIM=[],CLUSTERS=[],frontKey=-1;
+const NB4=[[-1,0,0,1],[1,0,0,-1],[0,1,1,0],[0,-1,-1,0]];
+function rebuildFront(t){
+  const key=Math.floor(t*4);if(key===frontKey)return;frontKey=key;
+  FRONT=new Map();PERIM=[];CLUSTERS=[];
+  const aff=i=>{const s=cellState(i,t);return s>=1;};
+  const burning=[];
+  for(const i of activeCells(t)){const st=cellState(i,t);if(st!==1)continue;burning.push(i);
+    const r=(i/DC)|0,c=i%DC,edges=[];
+    for(const [dr,dc,ex,ey] of NB4){const nr=r+dr,nc=c+dc;if(nr<0||nc<0||nr>=DR||nc>=DC)continue;
+      if(!aff(nr*DC+nc)){edges.push([ex,ey]);PERIM.push([i,ex,ey]);}}
+    FRONT.set(i,edges);}
+  // connected burning clusters (8-neighbour) -> one merged smoke source per cluster
+  const seen=new Set();
+  for(const i0 of burning){if(seen.has(i0))continue;const q=[i0],cl=[];seen.add(i0);
+    while(q.length){const i=q.pop();cl.push(i);const r=(i/DC)|0,c=i%DC;
+      for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){if(!dr&&!dc)continue;const nr=r+dr,nc=c+dc;if(nr<0||nc<0||nr>=DR||nc>=DC)continue;
+        const j=nr*DC+nc;if(!seen.has(j)&&cellState(j,t)===1){seen.add(j);q.push(j);}}}
+    let si=0,sx=0,sy=0;for(const i of cl){si+=INT[i];const [x,y]=xyOfCell(i);sx+=x;sy+=y;}
+    CLUSTERS.push({cells:cl,sumI:si,meanI:si/cl.length,cx:sx/cl.length,cy:sy/cl.length,id:cl[0]});}
+}
+
+// ── camera ─────────────────────────────────────────────────────────────────
+let camAnim=null;
+function flyTo(target,ms){
+  if(!map)return;
+  const from={lat:map.getCenter().lat(),lng:map.getCenter().lng(),zoom:map.getZoom(),tilt:map.getTilt()||0,heading:map.getHeading()||0};
+  const to=Object.assign({},from,target),t0=performance.now();
+  if(camAnim)cancelAnimationFrame(camAnim);
+  const ease=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
+  const step=now=>{const k=ease(clamp((now-t0)/ms,0,1));
+    map.moveCamera({center:{lat:from.lat+(to.lat-from.lat)*k,lng:from.lng+(to.lng-from.lng)*k},zoom:from.zoom+(to.zoom-from.zoom)*k,
+      tilt:from.tilt+(to.tilt-from.tilt)*k,heading:from.heading+(((to.heading-from.heading+540)%360)-180)*k});
+    if(k<1)camAnim=requestAnimationFrame(step);else camAnim=null;};
+  camAnim=requestAnimationFrame(step);
+}
+function fitZoom(wm,hm){                       // zoom that shows a wm x hm metre box with some margin
+  const W=Math.max(CW,300),Hh=Math.max(CH,300),mpp=Math.max(wm/(W*0.62),hm/(Hh*0.62));
+  return clamp(Math.log2(156543.03*Math.cos(LAT0*Math.PI/180)/mpp),10,19.5);
+}
+function fireCentre(){let sx=0,sy=0,k=0;
+  if(P&&P.hasRun){for(const i of activeCells(simT)){if(cellState(i,simT)===1){const [x,y]=xyOfCell(i);sx+=x;sy+=y;k++;}}}
+  if(!k){const pts=ignitionXY();for(const [x,y] of pts){sx+=x;sy+=y;k++;}}
+  return k?ll(sx/k,sy/k):{lat:LAT0,lng:LON0};}
+function camSim(ms){flyTo({lat:LAT0,lng:LON0,zoom:fitZoom(2*HALFX,2*HALFY),tilt:0,heading:0},ms||1200);}
+const NO3D='3D needs a vector map: create a Map ID (JavaScript, Vector, tilt and rotation on) in Google Cloud Console and set GOOGLE_MAPS_MAP_ID.';
+function checkTilt(t){setTimeout(()=>{if(map&&(map.getTilt()||0)<1&&t>0)toast(IS_VECTOR?'3D tilt is not available at this zoom; zoom in a little.':NO3D,6000);},900);}
+
+// ── ignition points ────────────────────────────────────────────────────────
+function ignitionXY(){
+  const pts=[];
+  if(PICKS.length){for(const [la,lo] of PICKS)pts.push(toXY(la,lo));}
+  else if(P&&P.preview){for(const i of P.preview)pts.push(xyOfCell(i));}
+  return pts;
+}
+
+// ── UI wiring ──────────────────────────────────────────────────────────────
+function fmtT(t){const m=t*(P&&P.stepMin||0);
+  if(P&&P.durationMin<=10)return 'T+'+Math.round(m*60)+' s';
+  return 'T+'+(m<10?m.toFixed(1):Math.round(m))+' min';}
+const tl=$('tl'),bPlay=$('bPlay');
+function setPlaying(v){playing=!!(v&&P&&P.hasRun);bPlay.textContent=playing?'Pause':(simT>0&&simT<ENDT?'Resume':'Play');bPlay.classList.toggle('on',playing);}
+bPlay.onclick=()=>{if(simT>=ENDT-1e-6){simT=0;clearParticles();}setPlaying(!playing);};
+$('bReset').onclick=()=>{simT=0;clearParticles();setPlaying(false);tl.value='0';frontKey=-1;scarDirty=true;updateHud(true);};
+function pbInfo(){if(!P||!P.hasRun){setTxt('pbinfo','');return;}const sec=(P.playback1x||ENDT*(P.secPerStep||1))/speed;
+  setTxt('pbinfo','plays '+P.durationLabel+' in '+(sec<90?Math.round(sec)+' s':(sec/60).toFixed(1)+' min'));}
+document.querySelectorAll('.spd').forEach(b=>b.onclick=()=>{speed=+b.dataset.s;document.querySelectorAll('.spd').forEach(x=>x.classList.toggle('on',x===b));pbInfo();});
+function syncToggles(){document.querySelectorAll('.tog').forEach(b=>b.classList.toggle('on',!!show[b.dataset.t]));}
+document.querySelectorAll('.tog').forEach(b=>b.onclick=()=>{const k=b.dataset.t;show[k]=!show[k];syncToggles();gridDirty=true;scarView=true;
+  if(k==='boundary'&&focusRect){focusRect.setVisible(show.boundary);applyEditMode();}
+  if(k==='lc')$('llc').classList.toggle('hide',!(show.lc&&LC));
+  if(GLOV)GLOV.requestRedraw();
+  if(MODE==='setup'&&(k==='grid'||k==='boundary'))emit({kind:'layers',grid:show.grid,boundary:show.boundary});});
+tl.oninput=()=>{simT=+tl.value;setPlaying(false);frontKey=-1;scarDirty=true;updateHud(true);};
+$('cOver').onclick=()=>flyTo({lat:LAT0,lng:LON0,zoom:Math.max(11,fitZoom(2*DX0,2*DY0)-2),tilt:0,heading:0},1400);   // whole domain
+$('cSim').onclick=()=>camSim();
+$('cFront').onclick=()=>{const c=fireCentre();flyTo({lat:c.lat,lng:c.lng,zoom:Math.min(19,fitZoom(2*HALFX,2*HALFY)+1.3)},1200);};
+$('cClose').onclick=()=>{const c=fireCentre();flyTo({lat:c.lat,lng:c.lng,zoom:Math.min(19.5,fitZoom(2*HALFX,2*HALFY)+2),tilt:60},1500);checkTilt(60);};
+$('cReset').onclick=()=>camSim(900);
+$('cTilt').onclick=()=>{const t=(map.getTilt()||0)>5?0:55;map.setTilt(t);checkTilt(t);};
+$('cFull').onclick=()=>{const w=$('wrap');if(document.fullscreenElement)document.exitFullscreen();else if(w.requestFullscreen)w.requestFullscreen();};
+document.addEventListener('fullscreenchange',()=>{const w=$('wrap');w.style.height=document.fullscreenElement?'100vh':(P?P.height:600)+'px';resize();});
+function maxPicks(){return (P&&P.maxPicks)||10;}
+$('bPick').onclick=()=>{picking=!picking;$('bPick').classList.toggle('pick',picking);$('bPick').textContent=picking?'Click the map… (done)':'Set ignition on map';
+  if(map)map.setOptions({draggableCursor:picking?'crosshair':null});applyEditMode();if(picking)toast('Click anywhere inside the dashed amber SIMULATION DOMAIN (inside or outside the blue focus box) to add hypothetical ignition points (up to '+maxPicks()+').');};
+$('bClear').onclick=()=>{PICKS=[];emit({kind:'ignite',points:[]});updateAreaPanel();};
+// interaction modes (set-up map): pan the map, edit the focus area, edit the simulation domain, or pick ignitions.
+// Only one rectangle is editable at a time and none while picking, so a click never moves a box by accident.
+function applyEditMode(){
+  const ed=MODE==='setup'&&P&&P.editable;
+  document.querySelectorAll('.mode').forEach(b=>b.classList.toggle('on',ed&&!picking&&b.dataset.m===EDIT));
+  $('modes').classList.toggle('hide',!ed);
+  if(focusRect){const on=ed&&!picking&&EDIT==='focus';focusRect.setOptions({editable:on,draggable:on,clickable:on});}
+  if(domainRect){const on=ed&&!picking&&EDIT==='domain';domainRect.setOptions({editable:on,draggable:on,clickable:on,
+    fillOpacity:on?0.06:0.0});domainRect.setVisible(ed&&show.boundary);}
+}
+document.querySelectorAll('.mode').forEach(b=>b.onclick=()=>{EDIT=b.dataset.m;if(picking)$('bPick').click();applyEditMode();
+  toast({pan:'Pan map: drag the map freely; the rectangles stay where they are.',focus:'Edit focus: drag the solid blue focus area or its handles.',
+    domain:'Edit domain: drag the dashed amber simulation domain or its handles. It may lie outside the focus area.'}[EDIT],3200);});
+
+let lastHudStep=-2;
+function setTxt(id,v){$(id).textContent=v;}
+function updateHud(force){
+  if(!P||MODE!=='sim')return;
+  setTxt('hclock',fmtT(simT));setTxt('tlab',fmtT(simT));
+  const k=clamp(Math.floor(simT+1e-6),0,Math.max(0,P.metrics.length-1));
+  setTxt('hstat',!P.hasRun?'not run':(simT>=ENDT-1e-6?'complete':(playing?'playing':'paused')));
+  if(!force&&k===lastHudStep)return;lastHudStep=k;
+  const m=P.metrics[k],ha=v=>(v<10?v.toFixed(2):v<100?v.toFixed(1):Math.round(v))+' ha';
+  if(!m){['hburn','hburned'].forEach(i=>setTxt(i,'0'));setTxt('harea','0 ha');setTxt('hburnA','0 ha');setTxt('hper','0 m');
+    setTxt('hdist','0 m');setTxt('hros','0 m/min');setTxt('hint','-');setTxt('hcen','-');$('hout').style.display='none';return;}
+  const cellHa=CELL*CELL/1e4;
+  setTxt('hburn',m.burning);setTxt('hburned',m.burned);setTxt('harea',ha(m.burned_ha));setTxt('hburnA',ha(m.burning*cellHa));
+  setTxt('hper',Math.round(m.perimeter_m)+' m');setTxt('hdist',Math.round(m.front_distance_m)+' m · '+m.ros_m_per_min.toFixed(1)+' m/min');
+  setTxt('hros',m.ros_m_per_min.toFixed(1)+' m/min');
+  setTxt('hint',m.burning?(m.intensity_class+(m.max_intensity_kw_m?' · '+Math.round(m.max_intensity_kw_m).toLocaleString()+' kW/m':'')):'-');
+  setTxt('hcen',m.centroid_lat!=null?m.centroid_lat.toFixed(4)+'°, '+m.centroid_lon.toFixed(4)+'°':'-');
+  $('hout').style.display=m.left_focus?'block':'none';
+  const ex=(P.expansions||[]).filter(e=>e.step<=simT+1e-6);
+  $('hexp').style.display=ex.length?'block':'none';
+  if(ex.length){const e=ex[ex.length-1];setTxt('hexp','Domain grew ×'+ex.length+' to '+(e.new.width_m/1000).toFixed(1)+' × '+(e.new.height_m/1000).toFixed(1)+' km');}
+  const cr=P.crossing;$('hcross').style.display=(cr&&simT>=cr.step)?'block':'none';
+  if(cr&&simT>=cr.step)setTxt('hcross','Crossed the '+(REG?REG.name:'study-region')+' boundary at T+'+Math.round(cr.minutes)+' min');
+  const lim=P.extentLimit;$('hlim').style.display=(lim&&simT>=lim.step-1)?'block':'none';
+  if(lim)setTxt('hlim',lim.title+' (not a natural stop)');
+  const xa=P.extinguishedAt;$('hext').style.display=(xa!=null&&simT*P.stepMin>=xa-1e-6)?'block':'none';
+  if(xa!=null)setTxt('hext','Fire went out at T+'+(xa<10?xa.toFixed(1):Math.round(xa))+' min');
+  if(REG&&m.burned_ha_bandipur!=null)setTxt('hreg',m.burned_ha_bandipur.toFixed(1)+' ha · '+m.burned_ha_regional_extension.toFixed(1)+' ha');
+}
+$('hadv').onclick=()=>{const g=$('hadvg'),hid=g.classList.toggle('hide');$('hadv').textContent=hid?'Advanced details ▸':'Advanced details ▾';};
+function updateWind(){
+  if(!P)return;const w=P.wind[clamp(Math.floor(simT),0,P.wind.length-1)];
+  const heading=(map&&map.getHeading?map.getHeading():0)||0;
+  $('warrow').setAttribute('transform',`rotate(${(w[1]+180-heading)%360} 20 20)`);
+  setTxt('wv',w[0].toFixed(1)+' m/s');
+  setTxt('wd','from '+compass(w[1])+' ('+Math.round(w[1])+'°) → fire & smoke pushed '+compass(w[1]+180));
+  if(MODE==='sim'){setTxt('hplume',compass(w[1]+180)+' ('+Math.round((w[1]+180)%360)+'°)');
+    setTxt('hwind',w[0].toFixed(1)+' m/s from '+compass(w[1]));}
+}
+function updateAreaPanel(){
+  if(!P||MODE!=='setup')return;
+  const f=P.focus;setTxt('aname',f.name);
+  setTxt('acen',f.lat.toFixed(4)+'° N, '+f.lon.toFixed(4)+'° E');
+  setTxt('adim',Math.round(f.width_m)+' × '+Math.round(f.height_m)+' m');
+  setTxt('aarea',(f.width_m*f.height_m/1e6).toFixed(2)+' km²');
+  setTxt('agrid',f.n_cols+' × '+f.n_rows);setTxt('acell',f.cell_m+' m');
+  setTxt('adom',Math.round(DC*CELL)+' × '+Math.round(DR*CELL)+' m');
+  setTxt('ahot',P.hotspotSummary||(P.hotspots&&P.hotspots.length?P.hotspots.length+(P.hotspotKind==='observed'?' observed':' demo (synthetic)'):'-'));
+  setTxt('aign',(P.maxPicks&&(P.placement==='Map points'||PICKS.length))?'HYPOTHETICAL · '+PICKS.length+' / '+P.maxPicks+' selected':P.ignitionLabel||(PICKS.length?PICKS.length+' map point'+(PICKS.length>1?'s':''):(P.placement||'-')));
+}
+function liveArea(b){         // live readout while the rectangle is being dragged/resized (no rerun)
+  const ne=b.getNorthEast(),sw=b.getSouthWest(),lat=(ne.lat()+sw.lat())/2,lon=(ne.lng()+sw.lng())/2;
+  const w=(ne.lng()-sw.lng())*MLON,h=(ne.lat()-sw.lat())*MLAT,c=P.focus.cell_m;
+  setTxt('acen',lat.toFixed(4)+'° N, '+lon.toFixed(4)+'° E');setTxt('adim',Math.round(w)+' × '+Math.round(h)+' m');
+  setTxt('aarea',(w*h/1e6).toFixed(2)+' km²');setTxt('agrid',Math.max(1,Math.round(w/c))+' × '+Math.max(1,Math.round(h/c)));
+}
+
+// ── per-frame visual effects, driven by the CA state at the current clock ──
+function lod(){const cellPx=CELL*PXM;return cellPx<3?0:(cellPx<10?1:(cellPx<28?2:3));}   // by on-screen cell size
+function stepFx(dt,t,now){
+  if(!P||!P.hasRun)return;
+  const L=lod(),w=P.wind[clamp(Math.floor(t),0,P.wind.length-1)],to=(w[1]+180)*Math.PI/180;
+  const spd=w[0],sv=Math.min(spd,14),wx=Math.sin(to)*sv,wy=Math.cos(to)*sv,q=budget,tk=playing?Math.min(speed,2):1;
+  const DK=3.2;                   // visual drift, m per real second per m/s of wind (x playback speed); a slower,
+                                  // denser plume stays one continuous body instead of isolated puffs
+  rebuildFront(t);
+  // flames, embers, ash per active cell
+  let nEm=0;
+  for(const i of activeCells(t)){
+    if(nEm>CAP.emitters)break;
+    const fs=fireStrength(i,t);const I=Math.max(INT[i],0.12),[cx,cy]=xyOfCell(i),edges=FRONT.get(i)||[];
+    if(fs>0.1)nEm++;
+    if(show.fire&&L>=1&&fs>0.1){
+      // flame tongues at every zoom where a cell is >= 3 px (normal browser zoom included); the flaming
+      // band is deep at the head fire (simulation residence), so flames fill it, densest on its leading edge
+      const pnf=patch(cx,cy,now);                          // clusters and gaps along the front
+      ACC.flame[i]+=dt*fs*(10+60*I*I+26*edges.length*I)*q*(L===3?1:(L===2?0.6:0.32))*(0.5+1.2*pnf*pnf)*(edges.length?1:0.9);
+      while(ACC.flame[i]>=1){ACC.flame[i]-=1;if(LIVE.flame>=CAP.flame*q)continue;
+        // flame bases on a rounded, overlapping disc around the cell centre (never a square / cell outline)
+        const ang=R()*6.283,rad=CELL*0.62*Math.sqrt(R());let x=cx+Math.cos(ang)*rad,y=cy+Math.sin(ang)*rad;
+        if(edges.length&&R()<0.55){const [ex,ey]=edges[(R()*edges.length)|0],el=Math.hypot(ex,ey)||1,ux=ex/el,uy=ey/el;
+          const off=CELL*(0.18+0.32*R()),along=(R()-.5)*CELL*1.1;x=cx+ux*off-uy*along;y=cy+uy*off+ux*along;}
+        // no flames rooted on a non-fuel (road / water / built) cell: such points move back to the centre
+        {const cc=cellOfXY(x,y);if(cc<0||(LC&&LC[cc])){x=cx+(x-cx)*0.3;y=cy+(y-cy)*0.3;}}
+        // clusters + gaps along the front: a slow per-position noise thins some stretches
+        if(hash(Math.round(x/7)+Math.round(y/7)*977,Math.floor(now/2600))<0.12)continue;
+        const life=0.45+R()*0.8,big=R()<0.10?1.8:(R()<0.35?0.55:1)*(0.7+0.6*pnf);
+        spawn('flame',{x,y,z:0,life,h:(5+22*I)*(0.5+0.8*R()*R()+0.3*R())*(0.6+0.4*fs)*big,w:(4+8*I)*(0.6+0.7*R())*big,
+          v:(R()*SPR.tongue.length)|0,seed:R()*6.28,fl:5+R()*9,str:fs,dx:(R()-.5)*0.9});}}
+    if(show.embers&&L>=2&&fs>0.35&&I>0.3){
+      // steady trickle plus occasional bursts from intense cells
+      const burst=hash(i,Math.floor(now/700))<0.02*I?3:1;
+      ACC.ember[i]+=dt*fs*Math.pow(I,1.5)*(0.4+spd*0.08)*q*burst*(L===3?1:0.5);
+      while(ACC.ember[i]>=1){ACC.ember[i]-=1;if(LIVE.ember>=CAP.ember*q)continue;
+        spawn('ember',{x:cx+(R()-.5)*CELL*.7,y:cy+(R()-.5)*CELL*.7,z:3+R()*8*I,vx:(R()-.5)*3,vy:(R()-.5)*3,vz:6+R()*10*I,
+          life:0.5+R()*0.8,sz:0.5+R()*1.2,seed:R()*6.28});}}
+    if(show.ash&&L>=2){const st=cellState(i,t);
+      if(st===2||(st===1&&fs>0.6)){ACC.ash[i]+=dt*(st===2?0.3:0.12)*q;
+        while(ACC.ash[i]>=1){ACC.ash[i]-=1;if(LIVE.ash>=CAP.ash*q)continue;
+          spawn('ash',{x:cx+(R()-.5)*CELL,y:cy+(R()-.5)*CELL,z:2+R()*8,vz:0.3+R()*0.9,life:4+R()*5,seed:R()*6.28,
+            sz:0.8+R()*1.6,v:(R()*SPR.ash.length)|0,rot:R()*6.28});}}}
+  }
+  // smoke: one merged source per connected burning cluster (5 adjacent cells -> one plume),
+  // plus thin smoke from smouldering ground
+  if(show.smoke&&L>=1){
+    for(const c of CLUSTERS){
+      const n=c.cells.length,rate=(1.2+2.2*Math.pow(c.sumI,0.6))*(0.6+0.25*Math.min(spd,8)/8)*q*(L===1?0.7:1);
+      const acc=(smokeAcc.get(c.id)||0)+dt*rate;let a=acc;
+      while(a>=1){a-=1;if(LIVE.smoke>=CAP.smoke*q)break;
+        // emit mostly from the hottest part of the front (head fire): intensity-weighted pick
+        let i=c.cells[(R()*n)|0];for(let tr=0;tr<4&&R()>Math.pow(Math.max(INT[i],0.1),1.5);tr++)i=c.cells[(R()*n)|0];
+        const [x,y]=xyOfCell(i),I=Math.max(INT[i],0.15),dens=Math.max(c.meanI,I);
+        if(patch(x*1.7,y*1.7,now*3)<0.1)continue;          // a few gaps: a broken plume, not a uniform sheet
+        const scale=1+Math.min(1.0,Math.sqrt(n)/6);
+        spawn('smoke',{x:x+(R()-.5)*CELL*.8,y:y+(R()-.5)*CELL*.8,z:3+R()*4,vz:3+R()*3+8*dens,life:10+R()*10,
+          s0:(10+10*I)*scale,s1:(60+90*dens)*scale+R()*30,rot:R()*6.28,vr:(R()-.5)*0.2,v:(R()*PUFFS.length)|0,
+          shade:dens>0.6?1:2,den:(0.4+0.38*dens)*(0.8+0.2*Math.min(1,n/6)),seed:R()*100});}
+      smokeAcc.set(c.id,a);}
+    for(const i of activeCells(t)){if(cellState(i,t)!==2)continue;const ss=smokeStrength(i,t);if(ss<=0.05)continue;
+      ACC.smoke[i]+=dt*ss*0.12*q;
+      while(ACC.smoke[i]>=1){ACC.smoke[i]-=1;if(LIVE.smoke>=CAP.smoke*q)break;const [x,y]=xyOfCell(i);
+        spawn('smoke',{x:x+(R()-.5)*CELL,y:y+(R()-.5)*CELL,z:1,vz:1.5+R()*2,life:7+R()*5,s0:6,s1:40+R()*30,rot:R()*6.28,vr:(R()-.5)*0.15,
+          v:(R()*PUFFS.length)|0,shade:3,den:0.35*ss,seed:R()*100});}}
+  }
+  if(show.wind&&L>=1&&spd>0.3&&LIVE.streak<CAP.streak*q){const E=Math.max(HALFX,HALFY)*1.6;spawn('streak',{x:(R()-.5)*2*E,y:(R()-.5)*2*E,life:1.6+R()*1.6});}
+  const shear=z=>0.55+0.45*Math.min(1,z/60);
+  for(const p of POOL.flame)if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.flame--;}}
+  for(const p of POOL.smoke)if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.smoke--;continue;}
+    const a=p.age/p.life,k=shear(p.z),turb=1.4+6*a;                  // turbulence grows with plume age
+    const tu=Math.sin(now*0.0007+p.seed+p.y*0.013)*turb+Math.sin(now*0.0019+p.seed*2.1)*turb*0.5;
+    const tv=Math.cos(now*0.0006+p.seed*1.3+p.x*0.011)*turb+Math.cos(now*0.0023+p.seed)*turb*0.5;
+    p.x+=(wx*DK*tk*k+tu)*dt;p.y+=(wy*DK*tk*k+tv)*dt;p.z+=p.vz*dt;p.vz=Math.max(0.6,p.vz*0.993);p.rot+=p.vr*dt*(1+a);}
+  for(const p of POOL.ember)if(p.on){p.age+=dt;if(p.age>=p.life||p.z<0){p.on=false;LIVE.ember--;continue;}
+    const up=p.age<0.45;p.vz-=(up?1.2:4.5)*dt;
+    p.x+=(p.vx+wx*DK*tk*(up?0.25:0.9)+Math.sin(now*0.011+p.seed)*2.2)*dt;p.y+=(p.vy+wy*DK*tk*(up?0.25:0.9)+Math.cos(now*0.013+p.seed)*2.2)*dt;p.z+=p.vz*dt;}
+  for(const p of POOL.ash)if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.ash--;continue;}
+    p.x+=(wx*DK*tk*0.45+Math.sin(now*0.003+p.seed)*1.1)*dt;p.y+=(wy*DK*tk*0.45+Math.cos(now*0.0025+p.seed)*1.1)*dt;p.z+=p.vz*dt;p.rot+=dt*(0.8+p.seed*0.2);}
+  for(const p of POOL.streak)if(p.on){p.age+=dt;if(p.age>=p.life){p.on=false;LIVE.streak--;continue;}p.x+=wx*DK*0.9*dt;p.y+=wy*DK*0.9*dt;}
+}
+
+function draw(t,now){
+  ctx=ctxFx;ctx.setTransform(DPR,0,0,DPR,0,0);ctx.clearRect(0,0,CW,CH);
+  ctxL.setTransform(DPR,0,0,DPR,0,0);ctxL.clearRect(0,0,CW,CH);
+  if(!H||!P)return;
+  const L=lod(),ex=clamp(1.2/PXM,1,2.6),w=P.wind[clamp(Math.floor(t),0,P.wind.length-1)];
+  // flame lean: the screen direction of the downwind vector
+  const to=(w[1]+180)*Math.PI/180,c0=W2S(0,0),c1=W2S(Math.sin(to)*10,Math.cos(to)*10);
+  const lean=w[0]>0.3?clamp(w[0]/12,0,1)*0.55*clamp((c1[0]-c0[0])/(Math.hypot(c1[0]-c0[0],c1[1]-c0[1])||1),-1,1):0;
+
+  // ignition markers (before the run, and during the first CA step)
+  if(!P.hasRun||t<1){ctx.globalCompositeOperation='source-over';
+    // OBSERVED ignition (valid NASA FIRMS cell): cyan, like the FIRMS detection; HYPOTHETICAL (user): yellow, labelled
+    const obsIg=P.ignitionKind==='observed',igc=obsIg?'#4dd0e1':'#ffd166';let lx=0,ly=0,ln=0;
+    for(const [x,y] of ignitionXY()){const s=W2S(x,y);if(!onScreen(s,20))continue;const r=Math.max(5,CELL*PXM*0.45),pulse=0.75+0.25*Math.sin(now*0.005);
+      ctx.globalAlpha=(P.hasRun?1-t:1)*0.95;ctx.strokeStyle=igc;ctx.lineWidth=2;ctx.beginPath();ctx.arc(s[0],s[1],r*pulse,0,Math.PI*2);ctx.stroke();
+      ctx.fillStyle=igc;ctx.beginPath();ctx.arc(s[0],s[1],2.4,0,Math.PI*2);ctx.fill();lx+=s[0];ly=ln?Math.min(ly,s[1]-r):s[1]-r;ln++;}
+    if(ln){const txt=obsIg?'OBSERVED IGNITION · NASA FIRMS':'HYPOTHETICAL IGNITION';ctx.globalAlpha=P.hasRun?1-t:1;
+      ctx.font='700 10px ui-monospace,Menlo,monospace';const tw=ctx.measureText(txt).width,bx=lx/ln-tw/2-5,by=ly-20;
+      ctx.fillStyle='rgba(10,13,18,.82)';ctx.fillRect(bx,by,tw+10,15);ctx.strokeStyle=igc;ctx.lineWidth=1;ctx.strokeRect(bx,by,tw+10,15);
+      ctx.fillStyle=igc;ctx.fillText(txt,bx+5,by+11);}}
+  if(!P.hasRun){ctx.globalAlpha=1;return;}
+
+  if(show.veg&&L>=2&&TREES.length){ctx.globalCompositeOperation='source-over';
+    for(const tr of TREES){const s=W2S(tr.x,tr.y);if(!onScreen(s,20))continue;
+      const st=tr.c>=0?cellState(tr.c,t):0;let sp=SPR.tree[tr.v],r=tr.r;
+      if(st===1)sp=SPR.treeLit;else if(st>=2){sp=SPR.treeBurnt;r*=0.72;}
+      const d=Math.max(2.5,r*2*PXM);ctx.globalAlpha=0.35;ctx.drawImage(sp,s[0]-d/2,s[1]-d/2,d,d);}}
+
+  // CA cell states: one continuous contoured ground layer (renderState / drawState on #statefx), not per-cell quads
+
+  // smoke shadow on the ground (sun from the north-west): gives the plume volume from above
+  if(show.smoke&&L>=1&&budget>0.5){ctx.globalCompositeOperation='source-over';
+    for(const p of POOL.smoke)if(p.on){const a=p.age/p.life;if(a<0.15)continue;
+      const s=W2S(p.x+p.z*0.55,p.y-p.z*0.55),size=Math.min(320,(p.s0+(p.s1-p.s0)*Math.sqrt(a))*PXM*s[2]*Math.max(1,ex*0.8));
+      if(!onScreen(s,size))continue;ctx.globalAlpha=clamp(0.1*Math.pow(1-a,1.2)*p.den,0,0.1);
+      ctx.drawImage(SPR.smokeShadow[p.v],s[0]-size/2,s[1]-size/2,size,size);}}
+
+  // LIGHT emitters (residual embers, glow, fire bed, flames, sparks) are drawn on #lightfx, which the
+  // browser SCREEN-blends over the map, the charred / burning ground layer and the smoke: light always
+  // brightens what is below it and is never hidden or dimmed by the cell-state surface.
+  // residual embers glowing in freshly burned ground
+  ctx=ctxL;ctx.globalAlpha=1;
+  if(show.heat&&L>=2){ctx.globalCompositeOperation='lighter';
+    for(const i of activeCells(t)){if(cellState(i,t)!==2)continue;const s0=t-OUT[i];if(s0>2)continue;const [x,y]=xyOfCell(i);
+      for(let k=0;k<3;k++){if(hash(i,k+90)<0.35)continue;const b=W2S(x+(hash(i,k+60)-0.5)*CELL,y+(hash(i,k+70)-0.5)*CELL);if(!onScreen(b,10))continue;
+        const f=0.5+0.5*Math.sin(now*0.004*(1+hash(i,k))+k*3+i);ctx.globalAlpha=clamp((1-s0/2)*0.75*f,0,1);
+        const d=2.5+2*hash(i,k+80);ctx.drawImage(SPR.glint,b[0]-d/2,b[1]-d/2,d,d);}}}
+
+  ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';ctx=ctxFx;
+  // smoke: dense charcoal over intense fire -> rises, expands, lightens and drifts downwind.
+  // Drawn oldest first so the dense young smoke near the fire sits on top.
+  if(show.smoke){ctx.globalCompositeOperation='source-over';
+    const live=[];for(const p of POOL.smoke)if(p.on)live.push(p);live.sort((a,b)=>b.age/b.life-a.age/a.life);
+    for(const p of live){const s=SZ(p.x,p.y,p.z,UPS),a=p.age/p.life;
+      const size=Math.min(340,(p.s0+(p.s1-p.s0)*Math.sqrt(a))*PXM*s[2]*Math.max(1,ex*0.8));
+      const sy=s[1];if(!onScreen([s[0],sy],size))continue;
+      const fade=a<0.07?a/0.07:Math.pow(1-(a-0.07)/0.93,0.85);
+      const shade=Math.min(4,p.shade+Math.floor(a*3.5));
+      ctx.globalAlpha=clamp(fade*p.den*0.65,0,0.38);
+      const cr=Math.cos(p.rot)*DPR,sr=Math.sin(p.rot)*DPR;ctx.setTransform(cr,sr,-sr,cr,s[0]*DPR,sy*DPR);
+      ctx.drawImage(SPR.smoke[shade][p.v],-size/2,-size/2,size,size);}
+    ctx.setTransform(DPR,0,0,DPR,0,0);}
+
+  ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';ctx=ctxL;
+  // fire glow + fire bed (drawn ABOVE the smoke: the fire lights the smoke from below and stays bright). The CA decides which cells burn; the look is organic: each burning
+  // cell gets jittered, flickering glow blobs of different size (a wide warm halo and a hot
+  // core close to the flames) and irregular bed blobs, so neighbouring cells merge into one
+  // ragged band instead of squares. The glow stays within ~1 cell of the burning cells.
+  for(const i of activeCells(t)){const fs=fireStrength(i,t);if(fs<=0)continue;
+    const [x,y]=xyOfCell(i),s=W2S(x,y);if(!onScreen(s,160))continue;
+    const I=Math.max(INT[i],0.12),fl=0.78+0.14*Math.sin(now*0.011+i*1.7)+0.08*Math.sin(now*0.029+i),ds=s[2];
+    const pn=patch(x,y,now);                        // slow spatial noise: hotter / cooler stretches of front
+    if(show.heat){ctx.globalCompositeOperation='lighter';
+      const hx=W2S(x+(hash(i,41)-0.5)*CELL*0.5,y+(hash(i,43)-0.5)*CELL*0.5);
+      // broad soft orange-red glow: overlapping halos of neighbouring burning cells merge into one band
+      const r1=Math.max(16*ds,CELL*PXM*ds*(1.25+0.6*I)*fl);
+      ctx.globalAlpha=clamp((0.16+0.5*I)*fs*fl*(0.85+0.3*pn),0,0.7);ctx.drawImage(SPR.glow,hx[0]-r1,hx[1]-r1,2*r1,2*r1);
+      // bright orange-gold cores at two seeded offsets per cell (no regular dot lattice), stronger at the head
+      for(let k=0;k<2;k++){const c2=W2S(x+(hash(i,k+51)-0.5)*CELL*0.95,y+(hash(i,k+53)-0.5)*CELL*0.95);
+        const r2=Math.max(6*ds,CELL*PXM*ds*(0.4+0.4*hash(i,k+55))*(0.7+0.5*I)*fl);
+        ctx.globalAlpha=clamp((0.18+0.6*I)*fs*fl*(0.75+0.45*pn),0,0.85);ctx.drawImage(SPR.core,c2[0]-r2,c2[1]-r2,2*r2,2*r2);}}
+    if(show.fire&&L>=1){ctx.globalCompositeOperation='lighter';const nb=3;
+      // burning bed: 3 large overlapping blobs per cell (never a string of small beads)
+      for(let k=0;k<nb;k++){const b=W2S(x+(hash(i,k)-0.5)*CELL*0.9,y+(hash(i,k+5)-0.5)*CELL*0.9);
+        const fk=0.7+0.3*Math.sin(now*0.0013*(6+5*hash(i,k+3))+k*2+i);
+        const rr=Math.max(6*ds,CELL*PXM*ds*(0.45+0.35*hash(i,k+11))*(0.7+0.5*I)*fs*fk*(0.8+0.4*pn));
+        ctx.globalAlpha=clamp((0.22+0.36*hash(i,k+29))*fs*fk,0,0.62);ctx.drawImage(SPR.bed,b[0]-rr*1.3,b[1]-rr*0.7,2.6*rr,1.4*rr);}}}
+  // flames: tapered tongues rising from the bed, leaning downwind (screen blend: dense walls stay
+  // orange instead of blowing out to white)
+  if(show.fire){ctx.globalCompositeOperation='screen';
+    for(const p of POOL.flame)if(p.on){
+      // flame base on the ground (+0.4 m), tip straight above it, both through the map camera
+      const s=SZ(p.x,p.y,0.4,0);if(!onScreen(s,90))continue;
+      const a=p.age/p.life,grow=a<0.2?a/0.2:1-0.55*(a-0.2)/0.8,flick=0.85+0.15*Math.sin(now*0.001*p.fl*6.28+p.seed);
+      const hm=p.h*ex*grow*flick,tp=SZ(p.x,p.y,0.4+hm,UPF);
+      let vx=tp[0]-s[0],vy=tp[1]-s[1];if(!isFinite(vx)||!isFinite(vy)){vx=0;vy=-hm*PXM*s[2];}
+      const h=Math.max(6*s[2],Math.hypot(vx,vy)),wd=Math.max(3*s[2],p.w*PXM*s[2]*ex*(0.8+0.3*grow)),vang=Math.atan2(vx,-vy);
+      ctx.globalAlpha=clamp((a<0.15?a/0.15:Math.pow(1-(a-0.15)/0.85,0.8))*(0.6+0.35*p.str),0,0.95);
+      const rot=vang+lean+p.dx*0.35+Math.sin(now*0.004+p.seed)*0.08,cs=Math.cos(rot)*DPR,sn=Math.sin(rot)*DPR;
+      ctx.setTransform(cs,sn,-sn,cs,s[0]*DPR,s[1]*DPR);ctx.drawImage(SPR.tongue[p.v],-wd/2,-h*0.9,wd,h);}
+    ctx.setTransform(DPR,0,0,DPR,0,0);}
+
+  // embers: short-lived glowing sparks (no long streaks), rising first, then carried downwind
+  if(show.embers){ctx.globalCompositeOperation='lighter';
+    for(const p of POOL.ember)if(p.on){const s=SZ(p.x,p.y,p.z*ex,UPS);const y1=s[1];if(!onScreen([s[0],y1],10))continue;
+      const a=p.age/p.life,f=0.5+0.5*Math.sin(now*0.035+p.seed*9);
+      ctx.globalAlpha=clamp((1-a)*(0.55+0.45*f),0,1);const d=Math.max(2,(1.6+p.sz*1.6)*Math.min(1.7,Math.max(0.8,PXM*0.7)))*(1-0.4*a);
+      ctx.drawImage(SPR.spark,s[0]-d/2,y1-d/2,d,d);}}
+
+  ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';ctx.setTransform(DPR,0,0,DPR,0,0);ctx=ctxFx;
+  // ash: small irregular grey flakes, low opacity, slowly rising and drifting
+  if(show.ash&&L>=2){ctx.globalCompositeOperation='source-over';
+    for(const p of POOL.ash)if(p.on){const s=SZ(p.x,p.y,p.z,UPS);if(!onScreen(s,10))continue;
+      const a=p.age/p.life,d=p.sz*Math.max(1.2,Math.min(2.4,PXM*0.9));ctx.globalAlpha=0.16*Math.sin(Math.PI*a);
+      const cr=Math.cos(p.rot)*DPR,sr=Math.sin(p.rot)*DPR*0.6;ctx.setTransform(cr,sr,-sr,cr,s[0]*DPR,s[1]*DPR);
+      ctx.drawImage(SPR.ash[p.v],-d/2,-d/2,d,d);}
+    ctx.setTransform(DPR,0,0,DPR,0,0);}
+
+  // optional fire-front outline (cell edges between burning and unburned fuel)
+  if(show.front){ctx.globalCompositeOperation='source-over';ctx.lineWidth=1.6;ctx.strokeStyle='#ffcf6b';ctx.globalAlpha=0.85;ctx.beginPath();
+    for(const [i,exn,ey] of PERIM){const [x,y]=xyOfCell(i),h2=CELL/2;
+      const p0=W2S(x+exn*h2+ey*h2,y+ey*h2+exn*h2),p1=W2S(x+exn*h2-ey*h2,y+ey*h2-exn*h2);ctx.moveTo(p0[0],p0[1]);ctx.lineTo(p1[0],p1[1]);}
+    ctx.stroke();}
+
+  // subtle wind streaks (direction and relative speed only)
+  if(show.wind){ctx.globalCompositeOperation='source-over';const n=w[0]||1,ux=Math.sin(to),uy=Math.cos(to);
+    ctx.strokeStyle='rgba(200,225,255,0.55)';ctx.lineWidth=1;
+    for(const p of POOL.streak)if(p.on){const a=p.age/p.life;ctx.globalAlpha=Math.sin(a*Math.PI)*0.35;
+      const s0=W2S(p.x,p.y),s1=W2S(p.x-ux*16,p.y-uy*16);ctx.beginPath();ctx.moveTo(s0[0],s0[1]);ctx.lineTo(s1[0],s1[1]);ctx.stroke();}}
+  ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
+}
+
+// vegetation representation (optional, low opacity, inside the focus area only)
+let TREES=[];
+function buildTrees(){
+  TREES=[];if(!P||!P.hasRun)return;const r2=rng(4242),dens=(x,y)=>0.55+0.3*Math.sin(x/37+1.3)*Math.cos(y/53-0.4)+0.25*Math.sin((x+y)/23);
+  const total=FRN*FCN;if(total>1600)return;                  // performance: only for small areas
+  for(let r=FR0;r<FR0+FRN;r++)for(let c=FC0;c<FC0+FCN;c++){const i=r*DC+c,[cx,cy]=xyOfCell(i);if(LC&&LC[i])continue;
+    const k=Math.round(clamp(dens(cx,cy),0.05,1.1)*6);
+    for(let j=0;j<k;j++)TREES.push({x:cx+(r2()-0.5)*CELL*0.95,y:cy+(r2()-0.5)*CELL*0.95,r:1.6+r2()*r2()*4.2,v:(r2()*SPR.tree.length)|0,c:i});}
+  TREES.sort((a,b)=>b.y-a.y);
+}
+
+// ── main loop: one requestAnimationFrame for everything ────────────────────
+let last=null,raf=null,frameMs=16,lastStepSeen=-1,scarFresh=false;
+// draw one frame of grid / scar / effects with the current camera
+function render(now,dt){
+  if(!P||!updateProjection())return;
+  if(OUTB&&OUTB.length&&Math.floor(simT)!==outbStep){outbStep=Math.floor(simT);gridDirty=true;}   // hatching follows the clock
+  if(gridDirty)drawGrid();
+  if(P.hasRun){if(scarDirty||Math.abs(simT-scarT)>0.12){renderScar(simT);renderState(simT);scarFresh=true;}
+    if(scarFresh||scarView){drawScar();drawState();scarFresh=false;scarView=false;}}
+  stepFx(dt,simT,now);draw(simT,now);
+}
+function needsFrames(){
+  if(!P)return false;
+  if(playing||gridDirty||scarDirty||scarView)return true;
+  for(const k in LIVE)if(LIVE[k]>0)return true;
+  if(P.hasRun&&activeCells(simT).length)return true;
+  return !P.hasRun&&ignitionXY().length>0;          // pulsing ignition markers
+}
+function loop(now){
+  raf=requestAnimationFrame(loop);
+  if(last===null)last=now;const dt=Math.min((now-last)/1000,0.05);last=now;
+  frameMs=frameMs*0.95+dt*1000*0.05;
+  if(frameMs>30)budget=Math.max(0.35,budget-0.01);else if(frameMs<18)budget=Math.min(1,budget+0.005);
+  if(budget<=0.36&&frameMs>32&&RS>0.6&&now-(loop.rsT||0)>1500){RS=Math.round((RS-0.1)*10)/10;resize();loop.rsT=now;}
+  else if(frameMs<15&&RS<1&&now-(loop.rsT||0)>3000){RS=Math.round((RS+0.1)*10)/10;resize();loop.rsT=now;}
+  if(!P||!map)return;
+  if(MODE==='region'){renderRegion();return;}
+  if(playing){const secPerStep=P.secPerStep||1.1;simT=Math.min(ENDT,simT+dt*speed/secPerStep);tl.value=String(simT);if(simT>=ENDT-1e-9)setPlaying(false);}
+  if(GLOV&&MVP&&!MVP_BAD){
+    // 3-D: draw inside Google's own frame (onDraw) so effects and imagery use the same camera
+    pendingDt+=dt;if(needsFrames())GLOV.requestRedraw();
+  }else render(now,dt);
+  const st=Math.floor(simT+1e-6);if(st!==lastStepSeen){lastStepSeen=st;scarDirty=true;}
+  updateHud(false);updateWind();
+}
+function onGLDraw(transformer){
+  if(!P||MVP_BAD||MODE==='region'){MVP=null;return;}
+  const m=transformer.fromLatLngAltitude({lat:LAT0,lng:LON0,altitude:0});
+  MVP=Float64Array.from(m);
+  checkMVP();if(!MVP)return;
+  render(performance.now(),Math.min(pendingDt,0.05));pendingDt=0;
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){cancelAnimationFrame(raf);raf=null;}else if(!raf){last=null;raf=requestAnimationFrame(loop);}});
+
+// ── Google Maps status -> Python (once per browser tab and status) ─────────
+function reportMapStatus(o){
+  try{const k='fire_map_status',v=JSON.stringify(o);if(sessionStorage.getItem(k)===v)return;sessionStorage.setItem(k,v);}catch(e){}
+  emit(Object.assign({kind:'mapstatus'},o));
+}
+
+// ── region mode (Command Center): satellite + model risk zones + detections ──
+let RZ=null,RKEY='',RDIRTY=true,RFITTED=false;
+const RISK_STOPS=[[0,[21,34,56]],[0.2,[30,58,95]],[0.4,[138,100,16]],[0.65,[224,162,27]],[0.8,[255,138,61]],[1,[255,90,60]]];
+function riskRGB(v){v=clamp(v,0,1);for(let k=1;k<RISK_STOPS.length;k++){const [b,cb]=RISK_STOPS[k];if(v<=b){const [a,ca]=RISK_STOPS[k-1],f=(v-a)/(b-a);
+  return ca.map((c,j)=>Math.round(c+(cb[j]-c)*f));}}return RISK_STOPS[RISK_STOPS.length-1][1];}
+const SEV_NAME=['LOW','MODERATE','HIGH','EXTREME'];
+function applyRegion(p){
+  const o=P&&P.region,r0=p.region;
+  if(!o||o.name!==r0.name||o.south!==r0.south||o.north!==r0.north||o.west!==r0.west||o.east!==r0.east)RFITTED=false;
+  P=p;MODE='region';UID=p.uid;
+  const r=p.region;LAT0=(r.south+r.north)/2;LON0=(r.west+r.east)/2;MLON=111320*Math.cos(LAT0*Math.PI/180);
+  const z=p.zones,n=z.lat.length,res=p.res;
+  RZ={n,res,lat:z.lat,lon:z.lon,risk:z.risk,sev:z.sev,fwi:z.fwi,act:z.act,ids:z.ids,idx:new Map(),lat0:Math.min(...z.lat),lon0:Math.min(...z.lon)};
+  for(let i=0;i<n;i++)RZ.idx.set(Math.round((z.lat[i]-RZ.lat0)/res)+','+Math.round((z.lon[i]-RZ.lon0)/res),i);
+  for(const id of ['hud','ctrl','layers','legend','area','search','cam','tools','wind'])$(id).classList.add('hide');
+  for(const id of ['rinfo','rlegend','rtools'])$(id).classList.remove('hide');
+  setTxt('rname',r.name);setTxt('rzones',String(n));setTxt('ralerts',String(p.alerts));
+  setTxt('rhot',p.hotspotSummary||'-');$('rsrc').textContent=p.sourceNote||'';
+  $('rlhot').innerHTML=p.hotspotKind==='observed'?'<i style="background:#4dd0e1;border-radius:50%"></i>NASA FIRMS observed hotspot'
+    :'<i style="background:#b39ddb;border-radius:50%"></i>Demo hotspot (synthetic, not observed)';
+  $('wrap').style.height=p.height+'px';setHeight(p.height+4);resize();
+  ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,cvs.width,cvs.height);ctxS.setTransform(1,0,0,1,0,0);ctxS.clearRect(0,0,cvsS.width,cvsS.height);if(ctxT){ctxT.setTransform(1,0,0,1,0,0);ctxT.clearRect(0,0,cvsT.width,cvsT.height);}if(ctxL){ctxL.setTransform(1,0,0,1,0,0);ctxL.clearRect(0,0,cvsL.width,cvsL.height);}
+  RDIRTY=true;if(gmReady)syncRegionObjects();
+}
+function fitRegion(){if(!map||!P||MODE!=='region')return;const r=P.region;map.fitBounds({north:r.north,south:r.south,east:r.east,west:r.west},8);}
+function syncRegionObjects(){
+  if(focusRect)focusRect.setVisible(false);
+  hotCircles.forEach(c=>c.setMap(null));hotCircles=[];RDIRTY=true;
+  if(map&&!RFITTED){RFITTED=true;fitRegion();}
+}
+function regionPx(lat,lng){const q=proj.fromLatLngToContainerPixel(new google.maps.LatLng(lat,lng));return q?[q.x,q.y]:null;}
+function renderRegion(){
+  if(!proj||!RZ)return;
+  const a=regionPx(P.region.north,P.region.west),b=regionPx(P.region.south,P.region.east);if(!a||!b)return;
+  const key=a.map(v=>v.toFixed(1))+'|'+b.map(v=>v.toFixed(1))+'|'+CW+'x'+CH;
+  if(key===RKEY&&!RDIRTY)return;RKEY=key;RDIRTY=false;
+  ctxG.setTransform(1,0,0,1,0,0);ctxG.clearRect(0,0,cvsG.width,cvsG.height);ctxG.setTransform(DPR,0,0,DPR,0,0);
+  ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,cvs.width,cvs.height);ctx.setTransform(DPR,0,0,DPR,0,0);
+  const h=RZ.res/2,memo=new Map(),corner=(la,lo)=>{const k=la.toFixed(4)+','+lo.toFixed(4);let v=memo.get(k);if(!v){v=regionPx(la,lo);memo.set(k,v);}return v;};
+  let cellPx=0;
+  for(let i=0;i<RZ.n;i++){
+    const la=RZ.lat[i],lo=RZ.lon[i],p1=corner(la+h,lo-h),p2=corner(la+h,lo+h),p3=corner(la-h,lo+h),p4=corner(la-h,lo-h);
+    if(!p1||!p3)continue;
+    const minx=Math.min(p1[0],p4[0]),maxx=Math.max(p2[0],p3[0]),miny=Math.min(p1[1],p2[1]),maxy=Math.max(p3[1],p4[1]);
+    if(maxx<0||minx>CW||maxy<0||miny>CH)continue;cellPx=Math.max(cellPx,maxx-minx);
+    const v=RZ.risk[i],c=riskRGB(v),al=clamp(0.05+0.50*Math.pow(v,1.15),0.05,0.55);   // low risk stays almost clear
+    ctxG.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${al})`;ctxG.beginPath();ctxG.moveTo(p1[0],p1[1]);ctxG.lineTo(p2[0],p2[1]);
+    ctxG.lineTo(p3[0],p3[1]);ctxG.lineTo(p4[0],p4[1]);ctxG.closePath();ctxG.fill();
+    if(RZ.sev[i]>=2){ctxG.strokeStyle=RZ.sev[i]===3?'rgba(255,59,59,0.95)':'rgba(255,179,71,0.85)';ctxG.lineWidth=RZ.sev[i]===3?1.6:1.1;ctxG.stroke();}
+  }
+  if(cellPx>=10){ctxG.strokeStyle='rgba(255,255,255,0.07)';ctxG.lineWidth=0.6;ctxG.beginPath();
+    for(let i=0;i<RZ.n;i++){const la=RZ.lat[i],lo=RZ.lon[i],p1=corner(la+h,lo-h),p2=corner(la+h,lo+h),p3=corner(la-h,lo+h);
+      if(p1&&p2&&p3){ctxG.moveTo(p1[0],p1[1]);ctxG.lineTo(p2[0],p2[1]);ctxG.lineTo(p3[0],p3[1]);}}ctxG.stroke();}
+  // zones with active fire nearby (model input), then detections on top
+  ctx.globalCompositeOperation='source-over';
+  for(let i=0;i<RZ.n;i++){if(!RZ.act[i])continue;const q=regionPx(RZ.lat[i],RZ.lon[i]);if(!q)continue;
+    ctx.strokeStyle='rgba(255,138,0,0.7)';ctx.lineWidth=1.4;ctx.beginPath();ctx.arc(q[0],q[1],clamp(cellPx*0.16,4,12),0,Math.PI*2);ctx.stroke();}
+  const obs=P.hotspotKind==='observed';
+  for(const s of (P.hotspots||[])){const q=regionPx(s.lat,s.lon);if(!q||q[0]<-10||q[1]<-10||q[0]>CW+10||q[1]>CH+10)continue;s._px=q;
+    ctx.fillStyle=obs?'rgba(77,208,225,0.22)':'rgba(179,157,219,0.22)';ctx.beginPath();ctx.arc(q[0],q[1],6.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=obs?'#4dd0e1':'#b39ddb';ctx.strokeStyle='#0a1218';ctx.lineWidth=1;ctx.beginPath();ctx.arc(q[0],q[1],3.2,0,Math.PI*2);ctx.fill();ctx.stroke();}
+}
+$('rFit').onclick=()=>fitRegion();
+$('wrap').addEventListener('mousemove',e=>{
+  const tip=$('rtip');if(MODE!=='region'||!proj||!RZ||e.target.closest('.panel')){tip.classList.add('hide');return;}
+  const rc=$('wrap').getBoundingClientRect(),x=e.clientX-rc.left,y=e.clientY-rc.top;let html='';
+  const obs=P.hotspotKind==='observed';
+  for(const s of (P.hotspots||[]))if(s._px&&Math.hypot(s._px[0]-x,s._px[1]-y)<8){
+    html=`<b>${obs?'NASA FIRMS observed hotspot':'Demo hotspot (synthetic)'}</b><br>${s.date||''}`+(s.sat?` · ${s.sat}`:'')+
+      (s.conf?`<br>Confidence: ${s.conf}`:'')+(s.frp!=null?` · FRP ${s.frp} MW`:'')+`<br>${s.lat.toFixed(4)}°, ${s.lon.toFixed(4)}°`;break;}
+  if(!html){const ll=proj.fromContainerPixelToLatLng(new google.maps.Point(x,y));
+    if(ll){const i=RZ.idx.get(Math.round((ll.lat()-RZ.lat0)/RZ.res)+','+Math.round((ll.lng()-RZ.lon0)/RZ.res));
+      if(i!=null)html=`<b>${RZ.ids[i]}</b> · ${SEV_NAME[RZ.sev[i]]||'LOW'}<br>Risk ${(RZ.risk[i]*100).toFixed(0)}% (model prediction)`+
+        (RZ.fwi[i]!=null?`<br>FWI ${(+RZ.fwi[i]).toFixed(1)}`:'')+(RZ.act[i]?'<br>Active fire nearby':'');}}
+  if(!html){tip.classList.add('hide');return;}
+  tip.innerHTML=html;tip.classList.remove('hide');
+  tip.style.left=Math.min(x+14,CW-tip.offsetWidth-6)+'px';tip.style.top=Math.min(y+14,CH-tip.offsetHeight-6)+'px';
+});
+$('wrap').addEventListener('mouseleave',()=>$('rtip').classList.add('hide'));
+
+// ── apply a payload from Python (first load or rerun with new arguments) ────
+let BY_OUT=[];
+function applyPayload(p){
+  if(p.mode==='region'){applyRegion(p);return;}
+  const focusMoved=!P||Math.abs(P.focus.lat-p.focus.lat)>1e-7||Math.abs(P.focus.lon-p.focus.lon)>1e-7;
+  const sizeChanged=!P||P.focus.width_m!==p.focus.width_m||P.focus.height_m!==p.focus.height_m||P.focus.cell_m!==p.focus.cell_m;
+  const firstLoad=!P;P=p;MODE=p.mode;UID=p.uid;
+  LAT0=p.focus.lat;LON0=p.focus.lon;MLON=111320*Math.cos(LAT0*Math.PI/180);
+  CELL=p.focus.cell_m;DR=p.domain.n_rows;DC=p.domain.n_cols;NC=DR*DC;FRN=p.focus.n_rows;FCN=p.focus.n_cols;
+  const mN=p.domain.m_north!=null?p.domain.m_north:p.domain.margin,mS=p.domain.m_south!=null?p.domain.m_south:p.domain.margin,
+        mW=p.domain.m_west!=null?p.domain.m_west:p.domain.margin,mE=p.domain.m_east!=null?p.domain.m_east:p.domain.margin;
+  FR0=mN;FC0=mW;HALFX=FCN*CELL/2;HALFY=FRN*CELL/2;
+  DXW=HALFX+mW*CELL;DXE=HALFX+mE*CELL;DYN=HALFY+mN*CELL;DYS=HALFY+mS*CELL;DX0=Math.max(DXW,DXE);DY0=Math.max(DYN,DYS);
+  IGN=new Float32Array(NC).fill(-1);OUT=new Float32Array(NC).fill(-1);INT=new Float32Array(NC);NF=!!p.nonfuel;
+  LC=null;if(p.landCover&&p.landCover.cells&&Object.keys(p.landCover.cells).length){LC=new Int8Array(NC);for(const k in p.landCover.cells)for(const i of p.landCover.cells[k])LC[i]=+k;}
+  NFC=null;if(p.nonfuelClasses){NFC=new Map();for(const k in p.nonfuelClasses)for(const i of p.nonfuelClasses[k])NFC.set(i,k);}
+  REG=p.studyRegion||null;OUTB=p.outsideBurned||null;
+  BY_IGN=[];BY_OUT=[];
+  const exact=!!(p.ignT&&p.outT);
+  if(p.hasRun){p.cells.forEach((i,k)=>{
+    IGN[i]=exact?p.ignT[k]:p.ign[k];
+    OUT[i]=exact?(p.outT[k]>=0?p.outT[k]:1e9):(p.out[k]>=0?p.out[k]:p.ign[k]+1);INT[i]=p.inten[k];
+    const fi=Math.floor(IGN[i]),fo=Math.floor(Math.min(OUT[i],1e6));
+    (BY_IGN[fi]=BY_IGN[fi]||[]).push(i);(BY_OUT[fo]=BY_OUT[fo]||[]).push(i);});}
+  LAST=p.lastStep||0;ENDT=p.hasRun?p.endT:0;buildActive();
+  ACC={flame:new Float32Array(NC),ember:new Float32Array(NC),ash:new Float32Array(NC),smoke:new Float32Array(NC)};
+  PICKS=(p.ignitionPoints||[]).map(q=>[q[0],q[1]]);
+  simT=0;activeKey=null;frontKey=-1;clearParticles();setupScar();buildTrees();lastHudStep=-2;DRAG=null;DRAGD=null;
+  if(firstLoad&&p.layers){for(const k in p.layers)if(k in show)show[k]=!!p.layers[k];}
+  syncToggles();gridDirty=true;
+  // panels per mode
+  const sim=MODE==='sim',igk=p.ignitionKind||'hypothetical';
+  $('tools').classList.toggle('hide',igk!=='hypothetical');
+  if(igk!=='hypothetical'&&picking){picking=false;$('bPick').classList.remove('pick');$('bPick').textContent='Set ignition on map';}
+  $('lign').classList.toggle('hide',igk==='none');
+  $('lignc').style.borderColor=igk==='observed'?'#4dd0e1':'#ffd166';
+  $('lignt').textContent=igk==='observed'?'Observed ignition (NASA FIRMS cell)':'Hypothetical ignition (user)';
+  $('hud').classList.toggle('hide',!sim);$('ctrl').classList.toggle('hide',!sim);$('layers').classList.toggle('hide',!sim&&!LC);
+  document.querySelectorAll('#layers .tog').forEach(b=>b.classList.toggle('hide',!sim&&b.dataset.t!=='lc'));
+  $('legend').classList.toggle('hide',!sim);$('area').classList.toggle('hide',sim);$('search').classList.toggle('hide',sim||!p.search);
+  $('wrap').style.height=p.height+'px';setHeight(p.height+4);resize();
+  if(sim){setTxt('hname',p.focus.name);setTxt('hdur',p.durationLabel);
+    const live=p.modeLabel==='LIVE';$('hbadge').textContent=live?'LIVE · OBSERVED IGNITION · SIMULATED SPREAD':(p.modeLabel||'WHAT-IF')+' · SIMULATED';
+    $('hbadge').classList.toggle('live',live);
+    setTxt('hign',p.ignitionText||p.ignitionLabel||'-');setTxt('hrisk',p.riskText||'not available');setTxt('hrid',p.reportId||'-');
+    $('hstale').style.display=p.staleNote?'block':'none';setTxt('hstale',p.staleNote||'');
+    setTxt('hfocus',Math.round(p.focus.width_m)+' × '+Math.round(p.focus.height_m)+' m');
+    setTxt('hdom',Math.round(DC*CELL)+' × '+Math.round(DR*CELL)+' m');
+    tl.max=String(ENDT);tl.value='0';tl.disabled=!p.hasRun;bPlay.disabled=!p.hasRun;setPlaying(false);pbInfo();
+    $('lhot').textContent=p.hotspotKind==='observed'?'Observed hotspot (NASA FIRMS VIIRS)':'Demo hotspot (synthetic, not observed)';}
+  $('lreg').classList.toggle('hide',!REG);$('lext').classList.toggle('hide',!(OUTB&&OUTB.length));
+  if(REG)setTxt('lregt',REG.name+' boundary · '+REG.status);
+  $('hregl').classList.toggle('hide',!REG);$('hreg').classList.toggle('hide',!REG);
+  if(p.landCover){setTxt('llch','Land cover · '+(p.landCover.statusTitle||'no fuel'));setTxt('llcs',p.landCover.summary||'');}
+  $('llc').classList.toggle('hide',!(show.lc&&LC));$('layers').querySelector('[data-t=lc]').classList.toggle('hide',!LC);
+  updateAreaPanel();updateHud(true);updateWind();if(GLOV)GLOV.requestRedraw();
+  const fromDrag=expectFocus&&Math.abs(expectFocus.lat-p.focus.lat)<2e-4&&Math.abs(expectFocus.lon-p.focus.lon)<2e-4;expectFocus=null;
+  if(gmReady){syncMapObjects(focusMoved||sizeChanged);
+    if(focusMoved&&!fromDrag)setTimeout(()=>camSim(1600),100);
+    if(p.autoplay&&p.hasRun)setTimeout(()=>setPlaying(true),focusMoved?1800:400);}
+}
+
+function rectBounds(){const f=P.focus;const dlat=FRN*CELL/2/111320,dlon=FCN*CELL/2/MLON;
+  return {north:LAT0+dlat,south:LAT0-dlat,east:LON0+dlon,west:LON0-dlon};}
+let suppressRect=false,rectTimer=null;
+function syncMapObjects(boundsChanged){
+  const editable=MODE==='setup'&&!!P.editable;
+  if(!focusRect){
+    focusRect=new google.maps.Rectangle({map,bounds:rectBounds(),strokeColor:'#8FD3FF',strokeOpacity:0.95,strokeWeight:2.4,
+      fillColor:'#8FD3FF',fillOpacity:0.05,editable,draggable:editable,zIndex:20});
+    focusRect.addListener('bounds_changed',()=>{if(suppressRect)return;const b=focusRect.getBounds();liveArea(b);
+      // lightweight preview only (no Python rerun, no simulation) until the drag has stopped for 650 ms
+      const ne=b.getNorthEast(),sw=b.getSouthWest(),[x0,y0]=toXY(sw.lat(),sw.lng()),[x1,y1]=toXY(ne.lat(),ne.lng());
+      DRAG={x:(x0+x1)/2,y:(y0+y1)/2,w:x1-x0,h:y1-y0};
+      if(!drawGrid.raf)drawGrid.raf=requestAnimationFrame(()=>{drawGrid.raf=0;gridDirty=true;});
+      clearTimeout(rectTimer);rectTimer=setTimeout(commitRect,650);});
+    // clicks INSIDE the focus box reach the ignition picker too (a Rectangle swallows map clicks)
+    focusRect.addListener('click',e=>{if(picking)onMapClick(e);});
+  }else{
+    focusRect.setOptions({editable,draggable:editable});
+    if(boundsChanged){suppressRect=true;focusRect.setBounds(rectBounds());setTimeout(()=>suppressRect=false,50);}
+  }
+  focusRect.setVisible(show.boundary);
+  // SIMULATION DOMAIN rectangle (set-up map only): an independent object - its outline is drawn dashed amber
+  // on the canvas; this transparent rectangle only provides the drag / resize handles
+  const db={north:P.domain.north,south:P.domain.south,east:P.domain.east,west:P.domain.west};
+  if(MODE==='setup'&&P.editable){
+    if(!domainRect){domainRect=new google.maps.Rectangle({map,bounds:db,strokeColor:'#ffc15c',strokeOpacity:0.0,strokeWeight:8,
+        fillColor:'#ffc15c',fillOpacity:0.0,editable:false,draggable:false,clickable:false,zIndex:19});
+      domainRect.addListener('bounds_changed',()=>{if(suppressDom)return;const b=domainRect.getBounds(),ne=b.getNorthEast(),sw=b.getSouthWest();
+        const [x0,y0]=toXY(sw.lat(),sw.lng()),[x1,y1]=toXY(ne.lat(),ne.lng());DRAGD={x0,y0,x1,y1};
+        setTxt('adom',Math.round(x1-x0)+' × '+Math.round(y1-y0)+' m (release to apply)');
+        if(!drawGrid.raf)drawGrid.raf=requestAnimationFrame(()=>{drawGrid.raf=0;gridDirty=true;});
+        clearTimeout(domTimer);domTimer=setTimeout(commitDomain,650);});
+    }else{suppressDom=true;domainRect.setBounds(db);setTimeout(()=>suppressDom=false,50);}
+  }else if(domainRect){domainRect.setVisible(false);}
+  applyEditMode();
+  regLines.forEach(l=>l.setMap(null));regLines=[];
+  if(REG&&REG.outline){for(const ring of REG.outline){regLines.push(new google.maps.Polyline({map,path:ring.map(q=>({lat:q[0],lng:q[1]})),
+    strokeOpacity:0,zIndex:12,clickable:false,icons:[{icon:{path:'M 0,-1 0,1',strokeOpacity:0.9,strokeColor:'#c6f36b',scale:2.2},offset:'0',repeat:'12px'}]}));}}
+  hotCircles.forEach(c=>c.setMap(null));hotCircles=[];
+  const obs=P.hotspotKind==='observed';
+  (P.hotspots||[]).forEach(h=>{const c=new google.maps.Circle({map,center:{lat:h.lat,lng:h.lon},radius:187.5,
+    strokeColor:obs?'#4dd0e1':'#b39ddb',strokeOpacity:0.95,strokeWeight:2,fillColor:obs?'#4dd0e1':'#b39ddb',fillOpacity:0.1,clickable:true,zIndex:15});
+    if(c.addListener)c.addListener('click',e=>{if(picking){onMapClick(e);return;}
+      toast((obs?'NASA FIRMS observed hotspot (375 m VIIRS pixel)':'Demo hotspot (synthetic, not observed)')+(h.date?' · '+h.date:'')+(h.sat?' · '+h.sat:'')+
+        (h.conf?' · confidence '+h.conf:'')+(h.frp!=null?' · FRP '+h.frp+' MW':''),6000);});
+    hotCircles.push(c);});
+}
+let expectFocus=null;           // focus we just emitted from a drag: don't fly the camera when it comes back
+let suppressDom=false,domTimer=null;
+function commitDomain(){
+  if(!P||MODE!=='setup'||!domainRect)return;
+  const b=domainRect.getBounds(),ne=b.getNorthEast(),sw=b.getSouthWest();
+  const lim=(P.limits&&P.limits.maxDomain)||15000,w=(ne.lng()-sw.lng())*MLON,h=(ne.lat()-sw.lat())*111320;
+  if(w<4*CELL||h<4*CELL){toast('Simulation domain too small (at least 4 cells per side).');return;}
+  if(Math.max(w,h)>lim){toast('Simulation domain larger than the maximum extent ('+(lim/1000)+' km) - it will be rejected; make it smaller.',5000);}
+  expectFocus={lat:P.focus.lat,lon:P.focus.lon};
+  emit({kind:'domain',north:+ne.lat().toFixed(7),south:+sw.lat().toFixed(7),east:+ne.lng().toFixed(7),west:+sw.lng().toFixed(7)});
+}
+function commitRect(){
+  if(!P||MODE!=='setup')return;
+  const b=focusRect.getBounds(),ne=b.getNorthEast(),sw=b.getSouthWest(),c=P.focus.cell_m;
+  const lat=(ne.lat()+sw.lat())/2,lon=(ne.lng()+sw.lng())/2,mlon=111320*Math.cos(lat*Math.PI/180);
+  let w=(ne.lng()-sw.lng())*mlon,h=(ne.lat()-sw.lat())*111320;
+  const lim=P.limits||{min:100,max:3000};
+  w=clamp(Math.round(w/c)*c,lim.min,lim.max);h=clamp(Math.round(h/c)*c,lim.min,lim.max);
+  if(Math.abs(lat-P.focus.lat)<1e-7&&Math.abs(lon-P.focus.lon)<1e-7&&w===P.focus.width_m&&h===P.focus.height_m)return;
+  expectFocus={lat,lon};emit({kind:'area',lat,lon,width_m:w,height_m:h});
+}
+
+// map click -> ignition point (lat/lon), only inside the simulation domain
+function onMapClick(e){
+  if(!picking||!P)return;const lat=e.latLng.lat(),lng=e.latLng.lng(),[x,y]=toXY(lat,lng);
+  const ci=cellOfXY(x,y);                                                  // the grid cell actually clicked
+  if(ci<0){toast('Outside the simulation domain ('+Math.round(DC*CELL)+' × '+Math.round(DR*CELL)+' m, dashed amber box) — enlarge the domain or click inside it.');return;}
+  // land cover never blocks a HYPOTHETICAL ignition; known land cover is only reported (checked again in Python)
+  const lcNote=NFC&&NFC.has(ci)?' Mapped land cover here: '+NFC.get(ci)+' (known, not fuel-verified).':'';
+  if(PICKS.length>=maxPicks()){toast(P.maxPicks?'Maximum of '+P.maxPicks+' hypothetical ignition points reached.':'Up to 10 ignition points.');return;}
+  PICKS.push([+lat.toFixed(6),+lng.toFixed(6)]);updateAreaPanel();
+  toast('HYPOTHETICAL ignition point added ('+PICKS.length+(P.maxPicks?' / '+P.maxPicks:'')+') - checking the location…'+lcNote,2600);
+  clearTimeout(onMapClick.t);onMapClick.t=setTimeout(()=>emit({kind:'ignite',points:PICKS}),500);
+}
+
+// ── Ctrl + left-drag: orbit the 3-D view (heading) and tilt it, with Google's camera ──
+(function(){
+  const wrap=$('wrap');let drag=null,moved=false;
+  const isOrbit=e=>(e.ctrlKey||e.metaKey)&&e.button===0;
+  wrap.addEventListener('pointerdown',e=>{
+    if(!map||MODE==='region'||!isOrbit(e)||e.target.closest('.panel'))return;
+    e.preventDefault();e.stopPropagation();
+    drag={x:e.clientX,y:e.clientY,h:map.getHeading()||0,t:map.getTilt()||0,id:e.pointerId};moved=false;
+    wrap.classList.add('orbit');if(!IS_VECTOR)toast(NO3D,6000);
+  },true);
+  window.addEventListener('pointermove',e=>{
+    if(!drag)return;e.preventDefault();e.stopPropagation();
+    const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>3)moved=true;
+    if(camAnim){cancelAnimationFrame(camAnim);camAnim=null;}
+    map.moveCamera({heading:((drag.h+dx*0.4)%360+360)%360,tilt:clamp(drag.t-dy*0.35,0,67.5)});
+  },true);
+  const end=e=>{if(!drag)return;e.preventDefault();e.stopPropagation();drag=null;wrap.classList.remove('orbit');};
+  window.addEventListener('pointerup',end,true);window.addEventListener('pointercancel',end,true);
+  // swallow the click / mouse events of an orbit gesture so the map does not pan or add points
+  for(const ev of ['mousedown','mousemove','mouseup','click'])wrap.addEventListener(ev,e=>{
+    if(drag||(ev==='click'&&moved)||((ev==='mousedown')&&(e.ctrlKey||e.metaKey)&&e.button===0)){e.stopPropagation();e.preventDefault();if(ev==='click')moved=false;}},true);
+})();
+
+// ── Google search: Geocoding first, Places (New) text search as fallback ───
+async function runSearch(){
+  const q=$('q').value.trim();if(!q)return;const box=$('results');box.innerHTML='<div>Searching…</div>';box.style.display='block';
+  let items=[],denied=[];
+  try{const {Geocoder}=await google.maps.importLibrary('geocoding');
+    const res=await new Geocoder().geocode({address:q});
+    items=(res.results||[]).slice(0,6).map(r=>({name:r.address_components&&r.address_components[0]?r.address_components[0].long_name:r.formatted_address,
+      address:r.formatted_address,lat:r.geometry.location.lat(),lon:r.geometry.location.lng(),types:r.types||[],
+      bounds:r.geometry.viewport?r.geometry.viewport.toJSON():null,source:'google_geocoding'}));
+  }catch(e){denied.push('Geocoding API ('+(e.code||e.message||e)+')');}
+  if(!items.length){
+    try{const {Place}=await google.maps.importLibrary('places');
+      const {places}=await Place.searchByText({textQuery:q,fields:['displayName','formattedAddress','location','viewport','types'],maxResultCount:6});
+      items=(places||[]).map(p=>({name:p.displayName,address:p.formattedAddress,lat:p.location.lat(),lon:p.location.lng(),types:p.types||[],
+        bounds:p.viewport?p.viewport.toJSON():null,source:'google_places'}));
+    }catch(e){denied.push('Places API (New) ('+(e.code||e.message||e)+')');}
+  }
+  if(!items.length){box.innerHTML='<div>'+(denied.length===2?'Google search is not enabled for this API key. Enable the <b>Geocoding API</b> or <b>Places API (New)</b> in Google Cloud Console.<small>'+denied.join(' · ')+'</small>':'No results for “'+q.replace(/</g,'&lt;')+'”.')+'</div>';return;}
+  box.innerHTML='';
+  items.forEach(it=>{const d=document.createElement('div');d.innerHTML=it.name.replace(/</g,'&lt;')+'<small>'+(it.address||'').replace(/</g,'&lt;')+' · '+it.lat.toFixed(4)+'°, '+it.lon.toFixed(4)+'°</small>';
+    d.onclick=()=>{box.style.display='none';if(it.bounds)map.fitBounds(it.bounds);else flyTo({lat:it.lat,lng:it.lon,zoom:14},1200);
+      emit({kind:'place',name:it.name,address:it.address,lat:it.lat,lon:it.lon,types:it.types,bounds:it.bounds,source:it.source});};
+    box.appendChild(d);});
+}
+$('qgo').onclick=runSearch;$('q').addEventListener('keydown',e=>{if(e.key==='Enter')runSearch();});
+
+// ── Google Maps bootstrap (official dynamic library loader), once per iframe ──
+let mapsRequested=false;
+function loadGoogle(key){
+  if(mapsRequested)return;mapsRequested=true;
+  (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.googleapis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({key:key,v:"weekly"});
+  initMap();
+}
+async function initMap(){
+  try{
+    const {Map,RenderingType,WebGLOverlayView}=await google.maps.importLibrary('maps');
+    map=new Map($('map'),{center:{lat:LAT0,lng:LON0},zoom:12,mapId:P.mapId,mapTypeId:'satellite',
+      renderingType:RenderingType?RenderingType.VECTOR:undefined,tilt:0,heading:0,tiltInteractionEnabled:true,headingInteractionEnabled:true,
+      mapTypeControl:true,mapTypeControlOptions:{position:google.maps.ControlPosition.TOP_RIGHT,style:google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+        mapTypeIds:['satellite','hybrid','terrain','roadmap']},
+      zoomControl:true,zoomControlOptions:{position:google.maps.ControlPosition.RIGHT_BOTTOM},
+      scaleControl:true,streetViewControl:false,rotateControl:true,fullscreenControl:false,clickableIcons:false,
+      gestureHandling:'greedy',isFractionalZoomEnabled:true});
+    const ov=new google.maps.OverlayView();ov.onAdd=function(){};ov.onRemove=function(){};ov.draw=function(){proj=this.getProjection();};ov.setMap(map);
+    map.addListener('click',onMapClick);
+    // 3-D camera: on a vector map, draw through Google's WebGLOverlayView camera
+    const setupGL=()=>{
+      const rt=map.getRenderingType?map.getRenderingType():null;
+      IS_VECTOR=!!(RenderingType&&rt===RenderingType.VECTOR);
+      if(IS_VECTOR&&!GLOV&&WebGLOverlayView){
+        GLOV=new WebGLOverlayView();
+        GLOV.onAdd=()=>{};GLOV.onContextRestored=()=>{};GLOV.onContextLost=()=>{MVP=null;};GLOV.onRemove=()=>{MVP=null;};
+        GLOV.onDraw=({transformer})=>onGLDraw(transformer);
+        GLOV.setMap(map);
+      }};
+    map.addListener('renderingtype_changed',setupGL);setupGL();
+    map.addListener('bounds_changed',()=>{mapIdle=false;});map.addListener('idle',()=>{mapIdle=true;if(GLOV)GLOV.requestRedraw();});
+    map.addListener('bounds_changed',()=>{RDIRTY=true;});
+    gmReady=true;if(MODE==='region')syncRegionObjects();else syncMapObjects(true);
+    google.maps.event.addListenerOnce(map,'idle',()=>{
+      setTimeout(()=>reportMapStatus({ok:true,vector:IS_VECTOR}),600);
+      if(MODE==='region'){fitRegion();return;}
+      setTimeout(()=>{camSim(2200);if(P.autoplay&&P.hasRun)setTimeout(()=>setPlaying(true),2400);},300);});
+  }catch(e){reportMapStatus({ok:false,error:'Google Maps could not load: '+String(e&&e.message||e).slice(0,160)});showErr('<div><b>Google Maps could not load.</b><br>'+String(e&&e.message||e)+'</div>');console.error(e);}
+}
+
+// ── Streamlit render messages ──────────────────────────────────────────────
+window.addEventListener('message',ev=>{
+  const d=ev.data;if(!d||d.type!=='streamlit:render')return;
+  const p=d.args&&d.args.payload;if(!p)return;
+  if(p.uid===UID)return;                      // same arguments as last time: nothing to do (rerun-safe)
+  applyPayload(p);
+  if(!p.key){showErr('<div><b>GOOGLE_MAPS_API_KEY is not set.</b><br>Add it to .env or Streamlit Secrets and restart.</div>');return;}
+  loadGoogle(p.key);
+});
+resize();raf=requestAnimationFrame(loop);
+sendMsg("streamlit:componentReady",{apiVersion:1});
+</script>
+</body></html>

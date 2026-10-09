@@ -112,28 +112,36 @@ def _retry_wait(exc: Exception, attempt: int) -> float:
 def fetch_elevations(lats: np.ndarray, lons: np.ndarray,
                      provider: str = "auto", retries: int = 6,
                      pause_s: float = 1.0,
-                     progress: Optional[Callable[[int, int], None]] = None) -> np.ndarray:
+                     progress: Optional[Callable[[int, int], None]] = None,
+                     timeout: Optional[float] = None, deadline_s: Optional[float] = None) -> np.ndarray:
     """Elevation in metres for every (lat, lon). Batches, retries with backoff,
     and (provider="auto") falls back from Open-Meteo to Open-Elevation. Raises
     if any value is still missing - never returns partial terrain."""
     lats = np.asarray(lats, float)
     lons = np.asarray(lons, float)
     out = np.full(lats.shape, np.nan)
+    t_end = time.monotonic() + deadline_s if deadline_s else None
+    kw = {"timeout": timeout} if timeout else {}
     providers = {"opentopodata": [(_fetch_opentopodata, OPENTOPODATA_BATCH)],
                  "open-meteo": [(_fetch_open_meteo, OPEN_METEO_BATCH)],
                  "open-elevation": [(_fetch_open_elevation, OPEN_ELEVATION_BATCH)],
                  "auto": [(_fetch_opentopodata, OPENTOPODATA_BATCH),
                           (_fetch_open_meteo, OPEN_METEO_BATCH),
-                          (_fetch_open_elevation, OPEN_ELEVATION_BATCH)]}[provider]
+                          (_fetch_open_elevation, OPEN_ELEVATION_BATCH)],
+                 # interactive runs: the fast provider first (Open-Topo-Data is rate-limited to 1 batch/s)
+                 "fast": [(_fetch_open_meteo, OPEN_METEO_BATCH),
+                          (_fetch_opentopodata, OPENTOPODATA_BATCH)]}[provider]
 
     for fn, batch in providers:
         todo = np.where(np.isnan(out))[0]
         n_done = 0
         for s in range(0, len(todo), batch):
             idx = todo[s:s + batch]
+            if t_end is not None and time.monotonic() > t_end:
+                raise RuntimeError(f"elevation fetch exceeded its {deadline_s:.0f} s time budget")
             for attempt in range(retries):
                 try:
-                    out[idx] = fn(lats[idx], lons[idx])
+                    out[idx] = fn(lats[idx], lons[idx], **kw)
                     break
                 except (requests.RequestException, ValueError, KeyError) as exc:
                     wait = _retry_wait(exc, attempt)

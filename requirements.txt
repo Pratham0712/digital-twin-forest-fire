@@ -15,3 +15,10 @@ apscheduler>=3.10
 sqlalchemy>=2.0  # storage layer: same code for MySQL (DATABASE_URL) and the local SQLite fallback
 pymysql>=1.1     # MySQL driver used by DATABASE_URL=mysql+pymysql://...
 cryptography>=42 # required by PyMySQL for MySQL 8 / hosted MySQL (caching_sha2_password)
+reportlab>=4.0   # simulation report PDF
+python-docx>=1.1 # simulation report DOCX
+matplotlib>=3.7  # report charts (optional: reports state 'charts unavailable' without it)
+# OPTIONAL (not needed by the dashboard): rasterio is only used by the optional
+# land-cover research module src/landcover and scripts/verify_landcover_sources.py
+# (windowed ESA WorldCover / Sentinel-2 COG reads). The fire simulation does not use
+# it. Install it yourself if you run that script:   pip install rasterio

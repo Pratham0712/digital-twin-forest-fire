@@ -43,6 +43,11 @@ class FIRMSClient:
         self.base_url = base_url
         self.source = source
         self.timeout = timeout
+        # Outcome of the most recent request (never contains the key):
+        # {"ok": bool, "error": str | None, "n": int, "fetched_utc": iso, "latest_acq_utc": iso | None}
+        self.last_status: dict = {"ok": None, "error": None, "n": 0, "fetched_utc": None,
+                                  "latest_acq_utc": None, "source": source}
+        self._errors: list = []
 
         self.session = requests.Session()
         retry = Retry(
@@ -63,6 +68,10 @@ class FIRMSClient:
         Returns an empty, correctly-shaped DataFrame (never raises) on failure
         so downstream pipeline stages can apply staleness handling per SRS 5.2.
         """
+        self._errors = []
+        if not self.map_key:
+            self._errors.append("FIRMS_MAP_KEY is not set")
+            return self._finish(None)
         area = f"{min_lon},{min_lat},{max_lon},{max_lat}"
         base = f"{self.base_url}/{self.map_key}/{self.source}/{area}"
         if day_range <= self.MAX_DAYS_PER_REQUEST:
@@ -90,20 +99,33 @@ class FIRMSClient:
             resp = self.session.get(url, timeout=self.timeout)
             resp.raise_for_status()
             if "Invalid" in resp.text[:200] or "error" in resp.text[:50].lower():
-                logger.error("FIRMS API returned an error payload: %s", resp.text[:200])
+                msg = self._clean(resp.text[:160].strip())
+                logger.error("FIRMS API returned an error payload: %s", msg)
+                self._errors.append(f"FIRMS rejected the request: {msg}")
                 return None
             return pd.read_csv(StringIO(resp.text))
         except requests.RequestException as exc:
-            logger.error("FIRMS API request failed: %s", str(exc).replace(self.map_key, "***"))
+            msg = self._clean(str(exc))
+            logger.error("FIRMS API request failed: %s", msg)
+            self._errors.append(f"FIRMS request failed: {msg[:200]}")
             return None
         except (pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
             logger.error("FIRMS response could not be parsed as CSV: %s", exc)
+            self._errors.append("FIRMS response could not be parsed")
             return None
 
+    def _clean(self, text: str) -> str:
+        """Never let the MAP_KEY reach logs or the UI."""
+        return text.replace(self.map_key, "***") if self.map_key else text
+
     def _finish(self, df: Optional[pd.DataFrame]) -> pd.DataFrame:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if df is None or df.empty:
             if df is not None:
                 logger.info("FIRMS returned no active hotspots for the requested area.")
+            ok = df is not None and not self._errors
+            self.last_status = {"ok": ok, "error": None if ok else ("; ".join(dict.fromkeys(self._errors)) or "no response"),
+                                "n": 0, "fetched_utc": now, "latest_acq_utc": None, "source": self.source}
             return self._empty_frame()
         df = df.copy()
         df["fetched_at"] = datetime.now(timezone.utc).isoformat()
@@ -111,6 +133,10 @@ class FIRMSClient:
             df["acq_date"] + " " + df["acq_time"].astype(str).str.zfill(4),
             format="%Y-%m-%d %H%M", errors="coerce",
         )
+        latest = df["acq_datetime"].max()
+        self.last_status = {"ok": True, "error": "; ".join(dict.fromkeys(self._errors)) or None, "n": int(len(df)), "fetched_utc": now,
+                            "latest_acq_utc": latest.strftime("%Y-%m-%dT%H:%MZ") if pd.notna(latest) else None,
+                            "source": self.source}
         logger.info("FIRMS: fetched %d hotspots", len(df))
         return df
 

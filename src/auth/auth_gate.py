@@ -16,6 +16,7 @@ Design:
     one shared user table across every page, not per-page state.
 """
 import sys
+import threading
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -28,14 +29,40 @@ from src.storage import database as db
 _READY_URLS: set = set()
 
 
+_INIT_LOCK = threading.Lock()
+
+
 def _ensure_db_ready():
     # Once per process and database (not per browser session): each of these
-    # is several round trips on a hosted MySQL.
-    url = db.database_url()
-    if url not in _READY_URLS:
-        db.init_db()
-        db.ensure_default_admin()
-        _READY_URLS.add(url)
+    # is several round trips on a hosted MySQL. The lock lets the background
+    # warm-up and a foreground caller share one run instead of doubling it.
+    with _INIT_LOCK:
+        url = db.database_url()
+        if url not in _READY_URLS:
+            db.init_db()
+            db.ensure_default_admin()
+            _READY_URLS.add(url)
+
+
+def _warm_up_in_background():
+    """Database set-up and the default region's data load while the person is
+    still typing their password, instead of before the login form appears."""
+    if _READY_URLS or getattr(_warm_up_in_background, "started", False):
+        return
+    _warm_up_in_background.started = True
+
+    def _run():
+        try:
+            _ensure_db_ready()
+        except Exception:
+            pass
+        try:
+            from src.dashboard.dashboard_common import prewarm_default_twin
+            prewarm_default_twin()
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True, name="login-warmup").start()
 
 
 def _render_db_status():
@@ -78,38 +105,47 @@ def require_login():
     Renders a login form and st.stop()s the page until the user is
     authenticated - matches the pattern every page already uses for
     set_page()/build_sidebar() being mandatory first calls."""
-    _ensure_db_ready()
-    _render_db_status()
-
     if is_logged_in():
+        _ensure_db_ready()
+        _render_db_status()
         return
+    if db.database_url() in _READY_URLS:
+        _render_db_status()
+    else:
+        _warm_up_in_background()          # form appears now; set-up runs behind it
 
-    _, mid, _ = st.columns([1, 1.5, 1])
+    # Login screen: cinematic background + glass card (presentation only; the
+    # credential check below is unchanged). There is no self-registration, so
+    # "Create account" explains how accounts are issued instead of faking one.
+    from src.dashboard.ui.login import BRAND_HTML, CREATE_ACCOUNT_HTML, FOOT_HTML, login_css
+    st.markdown(login_css(), unsafe_allow_html=True)
+    _, mid, _ = st.columns([1, 1.25, 1])
     with mid:
-        st.markdown(
-            "<div class='hero' style='margin-top:48px;'>"
-            "<div class='eyebrow'>BMS College of Engineering</div>"
-            "<h1>Forest Fire Digital Twin</h1>"
-            "<div class='sub'>Sign in to open the command center.</div></div>",
-            unsafe_allow_html=True,
-        )
-    with mid:
-        with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Sign in", use_container_width=True)
-
-        if submitted:
-            role = db.verify_user(username.strip(), password)
-            if role:
-                st.session_state["auth_user"] = username.strip()
-                st.session_state["auth_role"] = role
-                db.log_activity("login", f"Signed in ({role})", actor=username.strip())
-                st.rerun()
-            else:
-                db.log_activity("login_failed", "Incorrect username or password",
-                                actor=username.strip()[:80] or "unknown")
-                st.error("Incorrect username or password.")
+        with st.container(key="login_card"):
+            st.markdown(BRAND_HTML, unsafe_allow_html=True)
+            if db.fallback_reason():
+                st.caption("The cloud database is not reachable; this session uses the local database.")
+            tab_in, tab_new = st.tabs(["Sign in", "Create account"])
+            with tab_in:
+                with st.form("login_form", clear_on_submit=False):
+                    username = st.text_input("Username", placeholder="Enter your username")
+                    password = st.text_input("Password", type="password", placeholder="Enter your password")
+                    submitted = st.form_submit_button("Sign in", use_container_width=True)
+                if submitted:
+                    _ensure_db_ready()             # waits for the background set-up if still running
+                    role = db.verify_user(username.strip(), password)
+                    if role:
+                        st.session_state["auth_user"] = username.strip()
+                        st.session_state["auth_role"] = role
+                        db.log_activity("login", f"Signed in ({role})", actor=username.strip())
+                        st.rerun()
+                    else:
+                        db.log_activity("login_failed", "Incorrect username or password",
+                                        actor=username.strip()[:80] or "unknown")
+                        st.error("Incorrect username or password.")
+            with tab_new:
+                st.markdown(CREATE_ACCOUNT_HTML, unsafe_allow_html=True)
+            st.markdown(FOOT_HTML, unsafe_allow_html=True)
     st.stop()
 
 

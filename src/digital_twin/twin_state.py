@@ -33,6 +33,10 @@ from src.simulation.cellular_automata import FireSpreadSimulator, CellState
 
 logger = logging.getLogger(__name__)
 
+
+class LiveIgnitionForbidden(RuntimeError):
+    """A risk-based (non-observed) ignition was requested on a LIVE REAL-WORLD twin."""
+
 # Terrain never changes, so the elevation grid is shared by every twin in the
 # process (a fresh twin per region switch or session no longer re-reads it or,
 # for regions without a terrain table, re-calls the elevation API).
@@ -135,6 +139,12 @@ class DigitalTwin:
         (models/xgboost.json etc.).
         """
         self.offline = offline
+        # LIVE REAL-WORLD twins only simulate fire from OBSERVED detections (NASA FIRMS,
+        # src/simulation/observed_ignition.py). Igniting the model's HIGH/EXTREME risk zones
+        # (or the top-N risk zones) would invent a fire, so it is refused here, in the
+        # backend - not only hidden in the UI (audit BUG #3). Set for live twins and for
+        # the scenario twin of an applied LIVE hand-off (pages/2_Spread_Simulation.py).
+        self.live_observed_only = not offline
         self.region = region or REGION
         self.ingestion = DataIngestionModule(offline=offline, scenario=scenario, region=self.region)
         self.processor = DataProcessor()
@@ -250,6 +260,7 @@ class DigitalTwin:
         """
         if self.current_snapshot is None:
             raise RuntimeError("Call refresh() before simulate_spread_from_alerts().")
+        self._refuse_risk_ignition_in_live()
         snap = self.current_snapshot
         zone_ids = {a.zone_id for a in snap.alerts if a.severity in ("HIGH", "EXTREME")}
         return self._simulate_spread(zone_ids, horizon_minutes)
@@ -265,6 +276,7 @@ class DigitalTwin:
         """
         if self.current_snapshot is None:
             raise RuntimeError("Call refresh() before simulate_spread_from_top_n().")
+        self._refuse_risk_ignition_in_live()
         snap = self.current_snapshot
         if len(snap.risk_scores) == 0:
             return self._simulate_spread(set(), horizon_minutes)
@@ -272,7 +284,16 @@ class DigitalTwin:
         zone_ids = set(snap.processed_grid.reset_index(drop=True).iloc[order]["zone_id"])
         return self._simulate_spread(zone_ids, horizon_minutes)
 
+    def _refuse_risk_ignition_in_live(self):
+        if getattr(self, "live_observed_only", False):
+            raise LiveIgnitionForbidden(
+                "LIVE REAL-WORLD mode: fire is simulated only from observed NASA FIRMS detections; the model's "
+                "risk zones are predictions, not fires, so they are never ignited.")
+
     def _simulate_spread(self, ignition_zone_ids: set, horizon_minutes: Optional[int] = None) -> list:
+        # NOTE: the regional 0.1-degree CA keeps its zone-level NDVI value, which is a SYNTHETIC
+        # estimate (feature_engineering.synthetic_ndvi_independent); it is labelled SYNTHETIC in
+        # the UI. The real-data fuel (WorldCover + Sentinel-2) applies to the local simulation.
         snap = self.current_snapshot
         processed = snap.processed_grid
         horizon = horizon_minutes or SYSTEM.fire_spread_horizon_hours * 60
@@ -547,6 +568,9 @@ if __name__ == "__main__":
         print(f"{a.zone_id}  [{a.severity}]  risk={a.risk_score:.2f}  {a.reason}")
 
     print("\n=== RUNNING CA SIMULATION FROM HIGH-RISK ZONES ===")
+    if twin.live_observed_only:
+        print("LIVE data: no simulation from risk zones (fire is simulated only from observed detections).")
+        raise SystemExit(0)
     history = twin.simulate_spread_from_alerts()
     if history:
         final = history[-1]

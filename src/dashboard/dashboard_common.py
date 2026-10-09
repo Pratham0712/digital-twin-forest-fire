@@ -40,6 +40,13 @@ if _secret("FIRMS_MAP_KEY"):
     os.environ["FIRMS_MAP_KEY"] = _secret("FIRMS_MAP_KEY")
 if _secret("OWM_API_KEY"):
     os.environ["OWM_API_KEY"] = _secret("OWM_API_KEY")
+for _k in ("GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_MAP_ID"):
+    if _secret(_k):
+        os.environ[_k] = _secret(_k)
+# config.API read the environment at import; pick up keys supplied via Streamlit Secrets too
+from config.config import API as _API
+_API.firms_map_key = os.getenv("FIRMS_MAP_KEY", _API.firms_map_key)
+_API.owm_api_key = os.getenv("OWM_API_KEY", _API.owm_api_key)
 
 
 def set_page(title: str, icon: str = ":material/local_fire_department:"):
@@ -58,7 +65,13 @@ def set_page(title: str, icon: str = ":material/local_fire_department:"):
                                 layout="wide", initial_sidebar_state="expanded")
         except Exception:
             pass
-    st.markdown(CSS, unsafe_allow_html=True)
+    from src.dashboard.ui.theme import THEME_CSS, active_nav_css
+    from src.dashboard.ui.global_ticker import create_ticker_slot, render_global_ticker
+    st.markdown(CSS + THEME_CSS + active_nav_css(title), unsafe_allow_html=True)
+    # Global status ticker: reserved here so it sits above every page's content;
+    # drawn now from the shared twin and redrawn by ensure_twin() when it changes.
+    create_ticker_slot()
+    render_global_ticker()
 
 
 # ── theme ─────────────────────────────────────────────────────────────────── #
@@ -178,6 +191,20 @@ h1, h2, h3, h4, h5 { font-family: var(--font) !important; color: var(--text) !im
 .nav-card h4 { color: var(--text) !important; margin: 0 0 6px 0; font-size: 16px; }
 .nav-card p { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.55; }
 
+/* ── sidebar navigation: icon masks (colours / active state live in ui/theme.py) ── */
+[data-testid="stSidebarNav"] a::before {
+    content: ""; position: absolute; left: 12px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%);
+    background: #8A96A6; -webkit-mask: var(--ico) center / contain no-repeat;
+    mask: var(--ico) center / contain no-repeat; }
+[data-testid="stSidebarNav"] li:first-child a::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='7' height='7' rx='1.5'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1.5'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1.5'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1.5'/%3E%3C/svg%3E"); }
+[data-testid="stSidebarNav"] a[href*="What_If"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0'/%3E%3Ccircle cx='16' cy='6' r='2'/%3E%3Ccircle cx='10' cy='12' r='2'/%3E%3Ccircle cx='18' cy='18' r='2'/%3E%3C/svg%3E"); }
+[data-testid="stSidebarNav"] a[href*="Spread_Simulation"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3c1 3 4 4.5 4 8.5a4 4 0 0 1-8 0c0-1.6.8-2.7 1.6-3.6.3 1.4 1.2 2.1 1.9 2.1-.6-2.5.5-5 .5-7z'/%3E%3Cpath d='M5 20h14'/%3E%3C/svg%3E"); }
+[data-testid="stSidebarNav"] a[href*="Historical"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E"); }
+[data-testid="stSidebarNav"] a[href*="AI_Situation"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l1.8 4.6L18.5 9l-4.7 1.6L12 15l-1.8-4.4L5.5 9l4.7-1.4z'/%3E%3Cpath d='M18 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/%3E%3C/svg%3E"); }
+[data-testid="stSidebarNav"] a[href*="Model_Insights"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20V10M10 20V4M16 20v-7M22 20H2'/%3E%3C/svg%3E"); }
+[data-testid="stSidebarNav"] a[href*="Admin"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z'/%3E%3Cpath d='M9 12l2 2 4-4'/%3E%3C/svg%3E"); }
+[data-testid="stSidebarNav"] a[href*="Activity_Log"]::before { --ico: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 6h12M8 12h12M8 18h12'/%3E%3Ccircle cx='4' cy='6' r='1'/%3E%3Ccircle cx='4' cy='12' r='1'/%3E%3Ccircle cx='4' cy='18' r='1'/%3E%3C/svg%3E"); }
+
 [data-testid="stMetricValue"] { font-family: var(--mono) !important; }
 [data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 10px; }
 hr { border-color: var(--border) !important; }
@@ -212,6 +239,26 @@ def load_ml_model(region=None):
     """Trained model serving `region` (Karnataka model by default)."""
     from src.ml_models.model_registry import choose_for_region
     return _load_model_file(choose_for_region(region).model_file)
+
+
+def model_status_text(region=None) -> str:
+    """Which trained model serves this region, and its version metadata."""
+    from src.ml_models.model_registry import choose_for_region
+    choice = choose_for_region(region)
+    meta_file = {"xgboost_real.json": "training_metadata_real.json",
+                 "xgboost_india.json": "training_metadata_india.json"}.get(choice.model_file)
+    bits = [choice.label, choice.model_file]
+    try:
+        import json as _json
+        meta = _json.loads((MODELS_DIR / meta_file).read_text()) if meta_file else {}
+        if meta.get("feature_set_version"):
+            bits.append(f"feature set {meta['feature_set_version']}")
+        rng = meta.get("train_date_range")
+        if rng:
+            bits.append("trained on " + (" to ".join(map(str, rng)) if isinstance(rng, (list, tuple)) else str(rng)))
+    except Exception:
+        pass
+    return " · ".join(bits)
 
 
 def get_twin(offline: bool, scenario: dict = None, region=None) -> DigitalTwin:
@@ -259,15 +306,21 @@ def build_sidebar(show_scenario: bool = False, show_offline: bool = True):
     """Shared sidebar: offline toggle + region picker + refresh. Present on
     every page, and both choices persist across pages (see _remember)."""
     st.sidebar.markdown("### Controls")
-    offline_default = _pref("offline_mode", not bool(os.getenv("FIRMS_MAP_KEY")))
+    from src.dashboard.app_state import DEMO_TOGGLE_KEY, is_demo_mode, set_demo_mode
+    offline_default = is_demo_mode()          # the one authoritative demo / offline state
     if show_offline:
-        offline = st.sidebar.toggle(
-            "Offline / demo mode", value=offline_default,
-            help="Uses synthetic data. Turn off to use live satellite and weather feeds "
-                 "(needs API keys in .env or Streamlit Secrets).")
-    else:
-        offline = bool(offline_default)
-    _remember("offline_mode", offline)
+        # Streamlit gives each page's widget its own identity, so on navigation the
+        # toggle would fall back to its default (False). Mirror the authoritative
+        # value into the widget key on every run BEFORE the widget is created, and
+        # change the authoritative value only from the user's own click (on_change):
+        # rendering a page can never change the mode.
+        st.session_state[DEMO_TOGGLE_KEY] = offline_default
+        st.sidebar.toggle(
+            "Offline / demo mode", key=DEMO_TOGGLE_KEY,
+            on_change=lambda: set_demo_mode(st.session_state[DEMO_TOGGLE_KEY]),
+            help="ON: synthetic demo data. OFF: real NASA FIRMS and OpenWeatherMap data "
+                 "(keys from .env or Streamlit Secrets); a failing API is reported, never replaced by demo data.")
+    offline = is_demo_mode()
 
     scenario = st.session_state.get("scenario") if not show_scenario else None
     if show_scenario and offline:
@@ -321,6 +374,11 @@ def build_sidebar(show_scenario: bool = False, show_offline: bool = True):
     st.sidebar.caption(f"{region.name}  ·  alert threshold {SYSTEM.alert_threshold_pct:.0f}%  ·  "
                         f"grid {region.grid_resolution_deg}° (~{cell_km:.0f} km cells)")
 
+    try:
+        from src.dashboard.ui.alerts_ui import render_inapp_alerts
+        render_inapp_alerts()                   # receiver-side alarm for signed-in users
+    except Exception:                           # alerts must never break a page
+        pass
     return offline, scenario, region, refresh
 
 
@@ -406,6 +464,8 @@ def ensure_twin(offline: bool, scenario: dict, region, force_refresh: bool,
         cache = st.session_state.setdefault("_twin_cache", {})
         max_age = SYSTEM.min_refresh_interval_minutes * 60
         hit = cache.get(key)
+        if (hit is None and _PREWARM["running"] and not force_refresh and not trigger):
+            _PREWARM["done"].wait(30)          # the login-time load is nearly done: reuse it
         if hit is None or (time.time() - hit[1]) >= max_age:
             # Another visitor/tab may already have loaded this region within the
             # refresh interval; sharing it makes sign-in and reloads instant.
@@ -440,7 +500,34 @@ def ensure_twin(offline: bool, scenario: dict, region, force_refresh: bool,
         st.session_state["_last_region_key"] = _region_key(region)
         st.session_state["_last_offline"] = offline
         st.session_state["_last_scenario"] = scenario
+        from src.dashboard.ui.global_ticker import render_global_ticker
+        render_global_ticker(st.session_state["twin"])
     return st.session_state["twin"]
+
+
+_PREWARM = {"running": False, "done": __import__("threading").Event()}
+
+
+def prewarm_default_twin() -> None:
+    """Loads the model and the default region's data into the shared cache
+    before anyone has signed in, so the Command Center opens instantly.
+    Uses the same defaults as build_sidebar (no session state needed)."""
+    from src.dashboard.app_state import default_demo_mode
+    offline = default_demo_mode()
+    region = REGION_PRESETS[DEFAULT_PRESET]
+    key = _twin_key(offline, None, region)
+    with _SHARED_LOCK:
+        if key in _SHARED_TWINS or _PREWARM["running"]:
+            return
+        _PREWARM["running"] = True
+    try:
+        twin = get_twin(offline, None, region)
+        twin.refresh()
+        with _SHARED_LOCK:
+            _SHARED_TWINS[key] = (twin, time.time())
+    finally:
+        _PREWARM["running"] = False
+        _PREWARM["done"].set()
 
 
 def render_autorefresh_status(offline: bool, scenario: dict, region):
@@ -553,7 +640,7 @@ def render_scenario_controls(key_prefix: str):
     requiring an explicit "Apply" click for manual slider drags (recomputing
     ~1400 zones on every drag tick would be janky).
     """
-    defaults = dict(n_hotspots=8, temp_c=32, wind_speed_ms=5.0, humidity_pct=40)
+    defaults = dict(n_hotspots=8, temp_c=32, wind_speed_ms=5.0, humidity_pct=40, wind_from_deg=225)
     for k, v in defaults.items():
         sk = f"{key_prefix}_{k}"
         if sk not in st.session_state:
@@ -577,6 +664,12 @@ def render_scenario_controls(key_prefix: str):
         temp_c = st.slider("Temperature (°C)", 15, 48, key=f"{key_prefix}_temp_c")
     with c2:
         wind_speed_ms = st.slider("Wind speed (m/s)", 0.0, 20.0, step=0.5, key=f"{key_prefix}_wind_speed_ms")
+        wind_from_deg = st.slider("Wind direction (blowing FROM, °)", 0, 355, step=5,
+                                  key=f"{key_prefix}_wind_from_deg",
+                                  help="Meteorological convention: 225° = wind from the south-west, "
+                                       "so fire and smoke are pushed towards the north-east.")
+        st.caption(f"Wind from the {_compass_direction_name(wind_from_deg)} → pushes fire towards the "
+                   f"{_compass_direction_name(wind_from_deg + 180)}")
         humidity_pct = st.slider("Relative humidity (%)", 0, 100, key=f"{key_prefix}_humidity_pct")
 
     just_applied_label = st.session_state.pop(f"_{key_prefix}_just_applied", None)
@@ -584,7 +677,8 @@ def render_scenario_controls(key_prefix: str):
         st.success(f"Preset loaded: {just_applied_label} — sliders updated above.")
 
     scenario = {"n_hotspots": n_hotspots, "temp_c": temp_c,
-                "wind_speed_ms": wind_speed_ms, "humidity_pct": humidity_pct}
+                "wind_speed_ms": wind_speed_ms, "humidity_pct": humidity_pct,
+                "wind_from_deg": wind_from_deg}
     return scenario, bool(just_applied_label)
 
 
@@ -630,47 +724,56 @@ def render_wind_compass(wind_from_deg: float, wind_speed_ms: float, label: str =
 
 # ── render: header ────────────────────────────────────────────────────────── #
 
-def render_header(summary: dict, offline: bool, subtitle: str = None, region=None):
+def render_header(summary: dict, offline: bool, subtitle: str = None, region=None, badge: tuple = None):
+    """badge=(css class, text) overrides the DEMO / feed badge (What-If live modes)."""
     region = region or REGION
-    badge_cls = "badge-demo" if offline else "badge-live"
-    badge_txt = "DEMO" if offline else "LIVE"
-    ts = summary.get("timestamp", "")[:19].replace("T", " ")
+    badge_cls, badge_txt = "badge-demo", "DEMO"
+    if badge:
+        badge_cls, badge_txt = badge
+    elif not offline:
+        from src.dashboard.ui.global_ticker import data_badge, feed_status
+        cls, badge_txt = data_badge(feed_status(st.session_state.get("twin")))
+        badge_cls = "badge-live" if cls == "live" else "badge-demo"
+    from src.utils.timezone import format_ist
+    ts = format_ist(summary.get("timestamp"))
     title = subtitle or "Forest Fire Digital Twin"
     st.markdown(f"""
     <div class="hero">
       <div class="eyebrow">Forest Fire Digital Twin</div>
       <h1>{title}<span class="badge {badge_cls}">{badge_txt}</span></h1>
-      <div class="sub">{region.name} &nbsp;·&nbsp; Last refreshed {ts} UTC
+      <div class="sub">{region.name} &nbsp;·&nbsp; Last refreshed {ts}
         &nbsp;·&nbsp; BMS College of Engineering · ISE Batch 42</div>
     </div>
     """, unsafe_allow_html=True)
 
 
 def render_kpi_row(summary: dict):
+    """Seven key metrics as cards: label, icon, large value, short context and
+    a coloured accent line (colour is never the only cue: each card also says
+    what the number means)."""
+    from src.dashboard.ui.command_center import svg_icon
     bd = summary.get("severity_breakdown", {})
     max_r = summary.get("max_risk_score", 0)
     alerts = summary.get("total_alerts", 0)
     max_cls = "crit" if max_r > 0.6 else ("warn" if max_r > 0.4 else "ok")
     al_cls = "crit" if alerts > 100 else ("warn" if alerts > 0 else "ok")
-
-    st.markdown(f"""
-    <div class="kpi-row">
-      <div class="kpi"><div class="lbl">Grid zones</div>
-        <div class="val">{summary.get('total_zones', 0)}</div></div>
-      <div class="kpi"><div class="lbl">Active alerts</div>
-        <div class="val {al_cls}">{alerts}</div></div>
-      <div class="kpi"><div class="lbl">Extreme</div>
-        <div class="val {'crit' if bd.get('EXTREME',0) else 'ok'}">{bd.get('EXTREME',0)}</div></div>
-      <div class="kpi"><div class="lbl">High</div>
-        <div class="val {'warn' if bd.get('HIGH',0) else 'ok'}">{bd.get('HIGH',0)}</div></div>
-      <div class="kpi"><div class="lbl">Moderate</div>
-        <div class="val">{bd.get('MODERATE',0)}</div></div>
-      <div class="kpi"><div class="lbl">Peak risk</div>
-        <div class="val {max_cls}">{max_r:.0%}</div></div>
-      <div class="kpi"><div class="lbl">Mean risk</div>
-        <div class="val">{summary.get('mean_risk_score',0):.0%}</div></div>
-    </div>
-    """, unsafe_allow_html=True)
+    ext, high = bd.get("EXTREME", 0), bd.get("HIGH", 0)
+    cards = [
+        ("Grid zones", "grid", f"{summary.get('total_zones', 0)}", "", "neutral", "cells scored by the model"),
+        ("Active alerts", "bell", f"{alerts}", al_cls, al_cls,
+         f"zones at or above {SYSTEM.alert_threshold_pct:.0f}% risk"),
+        ("Extreme", "flame", f"{ext}", "crit" if ext else "ok", "crit" if ext else "ok", "immediate attention"),
+        ("High", "alert", f"{high}", "warn" if high else "ok", "warn" if high else "ok", "elevated risk"),
+        ("Moderate", "eye", f"{bd.get('MODERATE', 0)}", "", "fire", "keep under watch"),
+        ("Peak risk", "gauge", f"{max_r:.0%}", max_cls, max_cls, "highest zone score"),
+        ("Mean risk", "avg", f"{summary.get('mean_risk_score', 0):.0%}", "", "neutral", "regional average"),
+    ]
+    body = "".join(
+        f'<div class="kpi k-{accent}"><div class="top"><div class="lbl">{lbl}</div>'
+        f'<div class="ico">{svg_icon(ico)}</div></div><div class="val {cls}">{val}</div>'
+        f'<div class="ctx">{ctx}</div></div>'
+        for lbl, ico, val, cls, accent, ctx in cards)
+    st.markdown(f'<div class="kpi-row">{body}</div>', unsafe_allow_html=True)
 
 
 # ── render: risk map ──────────────────────────────────────────────────────── #
@@ -745,8 +848,11 @@ def _zoom_for(region) -> float:
 
 
 def render_risk_map(processed: pd.DataFrame, risk_scores: np.ndarray, region=REGION, height=520,
-                     scenario_active: bool = False):
-    st.markdown('<div class="sec-hdr">Regional risk map</div>', unsafe_allow_html=True)
+                     scenario_active: bool = False, header: bool = True):
+    """Plotly regional map. Only used as the fallback when no Google Maps key is
+    configured (the Command Center uses the Google satellite map otherwise)."""
+    if header:
+        st.markdown('<div class="sec-hdr">Regional risk map</div>', unsafe_allow_html=True)
     # The figure only changes when the snapshot does, so build it once per
     # snapshot instead of on every Streamlit rerun (tab switch, slider, etc.).
     cache = st.session_state.setdefault("_map_cache", {})
@@ -838,12 +944,62 @@ def render_alerts(alerts, summary: dict, limit: int = 15):
 
 # ── render: CA simulation ─────────────────────────────────────────────────── #
 
+NO_ACTIVE_FIRE = "NO ACTIVE FIRE DETECTED"
+HIGH_RISK_NO_FIRE = "HIGH FIRE-WEATHER RISK — NO ACTIVE FIRE DETECTED"
+
+
+def render_study_region_summary(twin: DigitalTwin):
+    """PRIMARY STUDY REGION (Bandipur Tiger Reserve) statistics from the
+    regional twin - kept separate from the rest of the region."""
+    from src.geo.study_region import load_study_region, zone_summary
+    snap = twin.current_snapshot
+    if snap is None:
+        return
+    try:
+        reg = load_study_region()
+        z = zone_summary(reg, snap.processed_grid, snap.risk_scores, snap.alerts,
+                         getattr(twin.ingestion, "last_hotspots", None))
+    except Exception:
+        return
+    if not z:
+        return
+    if z["zones"] == 0:
+        st.caption(f"Primary study region {z['name']} ({z['status']} boundary) lies outside the selected region's "
+                   "grid.")
+        return
+    det = "-" if z["detections"] is None else str(z["detections"])
+    st.caption(f"**Primary study region — {z['name']}** ({z['status']} boundary): {z['zones']} model zone(s) of "
+               f"0.1° · peak risk {z['peak_risk']:.0%} · mean {z['mean_risk']:.0%} (model prediction) · "
+               f"{z['alerts']} HIGH/EXTREME alert zone(s) · {det} satellite detection(s) inside the boundary.")
+
+
+def render_live_no_risk_ignition(twin: DigitalTwin):
+    """LIVE REAL-WORLD: the regional projection would ignite model risk zones
+    (predictions, not fires), so it is not run (audit BUG #3)."""
+    snap = twin.current_snapshot
+    high = bool(snap is not None and any(a.severity in ("HIGH", "EXTREME") for a in snap.alerts))
+    title = HIGH_RISK_NO_FIRE if high else NO_ACTIVE_FIRE
+    st.markdown(f'<div class="info-box"><b>{title}</b><br>LIVE REAL-WORLD mode: the regional 2-hour projection '
+                'ignites the model\'s HIGH/EXTREME risk zones, which are predictions, not observed fires, so it is '
+                'not run. High fire-weather risk does not create a fire. Fire spread at the selected location starts '
+                'only from observed NASA FIRMS detections (near-real-time satellite fire observation).</div>',
+                unsafe_allow_html=True)
+
+
 def render_ca_simulation(twin: DigitalTwin, key_prefix: str = "ca", allow_force_ignite: bool = True):
     """
     key_prefix keeps this page's two modes (current live/demo state vs a
     custom what-if scenario) from overwriting each other's stored animation
     in session_state - each mode gets its own ca_history slot.
+
+    allow_force_ignite: show "Force-ignite the 5 highest-risk zones" - callers
+    pass True only in explicitly marked DEMO / offline mode. A LIVE twin
+    (twin.live_observed_only) never ignites risk zones: the backend refuses it
+    (DigitalTwin raises LiveIgnitionForbidden) and this panel says why.
     """
+    if getattr(twin, "live_observed_only", False):
+        render_live_no_risk_ignition(twin)
+        return
     history_key = f"{key_prefix}_history"
 
     st.markdown('<div class="sec-hdr">Fire spread simulation — 2-hour projection</div>', unsafe_allow_html=True)

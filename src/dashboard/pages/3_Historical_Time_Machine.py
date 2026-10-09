@@ -1,6 +1,6 @@
 """
 Historical Time Machine - NEW feature page. Animates real satellite-confirmed
-fire detections (NASA FIRMS VIIRS archive) across the 2023-2025 fire seasons,
+fire detections (NASA FIRMS VIIRS archive) across every fire season in the archive (2023 onward),
 month by month, on the same dark map style used elsewhere. This is the
 project's clearest differentiator: almost no comparable student project has
 3 real fire seasons of ground-truth satellite data to show.
@@ -37,12 +37,12 @@ st.markdown(f"""
 <div class="hero">
   <div class="eyebrow">Forest Fire Digital Twin</div>
   <h1>Historical Time Machine</h1>
-  <div class="sub">Real NASA FIRMS satellite detections for <b>{region.name}</b> across the 2023 to 2025
-  fire seasons, animated month by month.</div>
+  <div class="sub">Real NASA FIRMS satellite detections for <b>{region.name}</b> across the
+  2023 to 2026 fire seasons, animated month by month.</div>
 </div>
 """, unsafe_allow_html=True)
 
-COLORS = {2023: "#ff6b4a", 2024: "#fbbf24", 2025: "#60a5fa"}
+COLORS = {2023: "#ff6b4a", 2024: "#fbbf24", 2025: "#60a5fa", 2026: "#34d399"}
 _KEEP = ["latitude", "longitude", "acq_date", "frp", "confidence"]
 
 
@@ -94,7 +94,7 @@ def generate_sample_history(seed: int = 99):
     hasn't been pulled locally. Same seasonal shape as the real data."""
     rng = np.random.default_rng(seed)
     rows = []
-    for year in [2023, 2024, 2025]:
+    for year in [2023, 2024, 2025, 2026]:
         for month in range(1, 6):
             weight = {1: 0.3, 2: 0.7, 3: 1.0, 4: 0.9, 5: 0.5}[month]
             for _ in range(int(rng.poisson(120 * weight))):
@@ -119,7 +119,7 @@ elif is_ka:
 else:
     st.markdown(f"""
     <div class="info-box">No historical detections are stored for <b>{region.name}</b> yet.
-    Run <code>python scripts/build_india_regions_dataset.py</code> to download the 2023 to 2025 FIRMS archive
+    Run <code>python scripts/build_india_regions_dataset.py</code> to download the FIRMS archive (2023 to 2026)
     for the Indian states; this page then fills in automatically.</div>
     """, unsafe_allow_html=True)
     st.stop()
@@ -151,7 +151,7 @@ fig_season.update_layout(
 )
 st.plotly_chart(fig_season, use_container_width=True)
 peak = monthly.groupby("month_name")["detections"].sum().reindex(month_order).fillna(0)
-st.caption(f"In {region.name}, detections peak in {peak.idxmax()} across the three seasons "
+st.caption(f"In {region.name}, detections peak in {peak.idxmax()} across the {df['year'].nunique()} seasons "
            f"({int(peak.max()):,} of {int(peak.sum()):,} detections in Jan to Jun).")
 
 # ── animated map, month by month ──

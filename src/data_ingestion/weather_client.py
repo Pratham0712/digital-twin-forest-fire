@@ -71,6 +71,10 @@ class _SlidingWindowLimiter:
                     time.sleep(sleep_for)
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 class WeatherClient:
     def __init__(self, api_key: str, base_url: str, timeout: int = 15, max_retries: int = 2):
         if not api_key:
@@ -81,6 +85,9 @@ class WeatherClient:
         self.api_key = api_key
         self.base_url = base_url
         self.timeout = timeout
+        # Outcome of the most recent request (never contains the key)
+        self.last_error: Optional[str] = None
+        self.last_status: dict = {"ok": None, "error": None, "n_ok": 0, "n_total": 0, "fetched_utc": None}
         self._limiter = _SlidingWindowLimiter(_SAFE_CALLS_PER_MINUTE, _WINDOW_SECONDS)
 
         self.session = requests.Session()
@@ -93,8 +100,15 @@ class WeatherClient:
         )
         self.session.mount("https://", adapter)
 
+    def _clean(self, text: str) -> str:
+        """Never let the API key (it is a URL query parameter) reach logs or the UI."""
+        return str(text).replace(self.api_key, "***") if self.api_key else str(text)
+
     def fetch_point(self, lat: float, lon: float) -> Optional[dict]:
         """Fetch current weather for a single lat/lon grid centroid."""
+        if not self.api_key:
+            self.last_error = "OWM_API_KEY is not set"
+            return None
         self._limiter.acquire()
         params = {"lat": lat, "lon": lon, "appid": self.api_key, "units": "metric"}
         try:
@@ -105,9 +119,15 @@ class WeatherClient:
                     "temporarily blocked - this resolves on its own within a few hours.",
                     lat, lon,
                 )
+                self.last_error = "OpenWeatherMap rate limit reached (HTTP 429)"
                 return "RATE_LIMITED"
+            if resp.status_code == 401:
+                self.last_error = "OpenWeatherMap rejected the API key (HTTP 401; new keys can take a few hours to activate)"
+                logger.error(self.last_error)
+                return None
             resp.raise_for_status()
             data = resp.json()
+            wind = data.get("wind") or {}
             return {
                 "latitude": lat,
                 "longitude": lon,
@@ -119,10 +139,18 @@ class WeatherClient:
                 "precipitation_mm": data.get("rain", {}).get("1h", 0.0),
                 "clouds_pct": data.get("clouds", {}).get("all", 0),
                 "weather_main": data.get("weather", [{}])[0].get("main", "Unknown"),
+                "weather_description": data.get("weather", [{}])[0].get("description", ""),
+                "observed_at": (datetime.fromtimestamp(int(data["dt"]), timezone.utc).isoformat()
+                                if data.get("dt") else None),
+                "place_name": data.get("name") or "",
                 "fetched_at": datetime.now(timezone.utc).isoformat(),
+                # wind values the response did not contain (the 0.0 defaults above
+                # are not observations; the live simulator shows them as unavailable)
+                "missing_fields": [f for f, k in (("wind_speed_ms", "speed"), ("wind_deg", "deg")) if k not in wind],
             }
         except (requests.RequestException, KeyError, ValueError) as exc:
-            logger.error("OpenWeatherMap request failed for (%s, %s): %s", lat, lon, exc)
+            self.last_error = f"OpenWeatherMap request failed: {self._clean(exc)[:200]}"
+            logger.error("OpenWeatherMap request failed for (%s, %s): %s", lat, lon, self._clean(exc))
             return None
 
     def fetch_forecast_point(self, lat: float, lon: float, horizon_hours: float = 2.0) -> Optional[List[dict]]:
@@ -146,7 +174,7 @@ class WeatherClient:
                      for it in resp.json()["list"]]
             return slots or None
         except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
-            logger.error("OpenWeatherMap forecast request failed for (%s, %s): %s", lat, lon, exc)
+            logger.error("OpenWeatherMap forecast request failed for (%s, %s): %s", lat, lon, self._clean(exc))
             return None
 
     def fetch_forecast_wind(self, points: List[dict], horizon_hours: float = 2.0) -> List[List[dict]]:
@@ -180,6 +208,11 @@ class WeatherClient:
         """
         if not grid_points:
             return self._empty_frame()
+        self.last_error = None
+        if not self.api_key:
+            self.last_status = {"ok": False, "error": "OWM_API_KEY is not set", "n_ok": 0,
+                                "n_total": len(grid_points), "fetched_utc": _now()}
+            return self._empty_frame()
 
         records = []
         rate_limited = threading.Event()
@@ -197,6 +230,7 @@ class WeatherClient:
                     rate_limited.set()
                     continue
                 if rec is not None:
+                    rec.pop("missing_fields", None)          # grid frame keeps its existing columns
                     records.append(rec)
 
         if rate_limited.is_set():
@@ -205,6 +239,10 @@ class WeatherClient:
                 "succeeded. Falling back to whatever succeeded so far.",
                 len(records), len(grid_points),
             )
+        self.last_status = {"ok": bool(records), "n_ok": len(records), "n_total": len(grid_points),
+                            "fetched_utc": _now(),
+                            "error": None if len(records) == len(grid_points) else
+                            (self.last_error or "some points failed")}
         if not records:
             logger.warning("WeatherClient.fetch_grid: no successful responses; returning empty frame.")
             return self._empty_frame()
@@ -220,9 +258,13 @@ class WeatherClient:
     def generate_sample(grid_points: List[dict], seed: Optional[int] = None,
                          temp_c: Optional[float] = None,
                          wind_speed_ms: Optional[float] = None,
-                         humidity_pct: Optional[float] = None) -> pd.DataFrame:
+                         humidity_pct: Optional[float] = None,
+                         wind_from_deg: Optional[float] = None) -> pd.DataFrame:
         """Synthetic weather generator. Pass temp_c/wind_speed_ms/humidity_pct
-        to center the spread around a chosen scenario value."""
+        to center the spread around a chosen scenario value. wind_from_deg
+        (meteorological convention: the bearing the wind blows FROM) gives
+        every point that direction +/- 15 deg; without it the direction is
+        random per point, as before."""
         import numpy as np
         rng = np.random.default_rng(seed)
         n = len(grid_points)
@@ -241,5 +283,9 @@ class WeatherClient:
             "clouds_pct": rng.integers(0, 100, n),
             "weather_main": rng.choice(["Clear", "Clouds", "Rain"], n, p=[0.6, 0.3, 0.1]),
         })
+        if wind_from_deg is not None:
+            # Reuses the uniform draw above (no extra random numbers), so every
+            # other column is identical to a run without a wind direction.
+            df["wind_deg"] = (float(wind_from_deg) + (df["wind_deg"] - 180.0) / 12.0) % 360.0
         df["fetched_at"] = datetime.now(timezone.utc).isoformat()
         return df
