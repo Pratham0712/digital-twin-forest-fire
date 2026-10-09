@@ -282,6 +282,54 @@ python -m src.scheduler.scheduler --once           # single cycle (use this
 pytest tests/ -v
 ```
 
+## Local simulation: fire model, domain, ignition check, study region
+
+* **Fire model (default `local_ca_model = "ros"`).** A rate-of-spread cellular automaton
+  (`src/simulation/fire_behaviour.py`, `src/simulation/ros_ca.py`). The spread RATE comes from the Canadian
+  FBP System equations: FFMC (so temperature and humidity) and wind give the Initial Spread Index, a blended
+  FBP D-1 / O-1a fuel gives the head-fire ROS, BUI the build-up effect, and the fire ellipse gives flank and
+  backing rates. Each burning cell offers its 24 nearest neighbours (true distances, so diagonals are
+  geometrically corrected) an arrival time; slope, fuel continuity (NDVI) and ±25 % simulated fuel
+  variability modify it. The fuel blend and residence times are ASSUMPTIONS, not calibrated for Bandipur:
+  the output is a physically consistent what-if, not an operational forecast. The original probability CA
+  is still available with `model="legacy"`.
+* **Time.** The selected simulated duration is always computed in full (internal sub-steps keep fast fires
+  accurate; ~60 frames are stored). Playback is separate: 1× shows about one simulated minute per second;
+  0.5× / 2× / 5× change only the playback, never the result. If the fire goes out, the run still covers
+  the whole duration and says when it went out.
+* **Simulation domain.** Configurable before a run: Auto (focus + duration margin), Local 1 km, Small 2 km,
+  Medium 5 km, Large 10 km or Custom, plus a maximum extent (2 to 15 km). The dashed amber box on the map is
+  the domain; the solid blue box is the focus area. Ignitions can be placed anywhere inside the domain. The
+  domain still grows before the fire reaches its edge, up to the maximum extent; the run says so if that
+  limit is reached.
+* **Hypothetical ignition check.** A clicked point is checked against mapped OpenStreetMap features around
+  that point (`src/simulation/ignition_site.py`; a small cached tile per click, nothing is fetched while
+  the box is dragged). Roads, buildings / built-up areas, water and bare ground are rejected; mapped
+  vegetation is accepted; anything else is LOCATION UNVERIFIED (accepted with a warning). This check only
+  decides where an ignition may be placed, never how the fire spreads.
+* **Bandipur default.** The preset opens on a forest interior (11.6560 N, 76.5800 E, west of the
+  Gundlupet-Ooty road; chosen from Google satellite imagery), not on the Bandipur campus / NH 766 roadside.
+* **Study region.** Bandipur Tiger Reserve boundary from `data/study_region/` (OFFICIAL file when provided,
+  otherwise the labelled APPROXIMATE extent); fire crossing it continues into the REGIONAL EXTENSION with
+  separate statistics.
+* **Benchmarks (offline).** `python scripts/benchmark_phase3.py` (run path, both models, domain presets) and
+  `python scripts/benchmark_ui_offline.py` (app start and page reruns, demo data, network disabled).
+* **Optional research module.** `src/landcover/` (ESA WorldCover + OSM + Sentinel-2 fusion) and
+  `scripts/verify_landcover_sources.py` are kept for analysis; they are not part of the simulation path.
+
+## Reports and emergency alerts
+
+* After every completed simulation: **Download / Print Simulation Report** (PDF, DOCX, printable view; built from
+  the stored snapshot of that run, report ID `FFDT-…`) and **Send Emergency Alert** (admin only).
+* Alerts are opt-in: review dialog → recipients (enabled, verified channels only) → explicit confirmation. WHAT-IF
+  alerts always say *"SIMULATION ONLY — This is a hypothetical forest-fire scenario, not confirmation of an active
+  fire."* Every attempt is audited (Admin → Emergency alerts). Statuses are the provider's (accepted / queued /
+  failed / not configured / mock) - never "delivered" without confirmation.
+* Configure in `.env`: `SMTP_*` (email), `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` (SMS),
+  `ALERT_PROVIDER_MODE=mock` to test without sending. Signed-in users get an in-app alarm (sidebar) with
+  acknowledge / mute / test; email and SMS cannot play a custom sound on a recipient's phone.
+* Extra packages: `pip install reportlab python-docx matplotlib`.
+
 ## Project structure
 
 ```

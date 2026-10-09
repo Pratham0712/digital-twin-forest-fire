@@ -34,7 +34,7 @@ import streamlit.components.v1 as components
 
 from config.config import SYSTEM
 from src.simulation.local_spread import (FocusArea, LocalSpreadResult, SimulationDomain, domain_for,
-                                         ignition_mask)
+                                         ignition_mask, initial_domain)
 
 _COMPONENT_DIR = Path(__file__).resolve().parent / "components" / "fire_map"
 _fire_map = components.declare_component("fire_map", path=str(_COMPONENT_DIR))
@@ -76,8 +76,36 @@ def _geometry(focus: FocusArea, domain: SimulationDomain) -> Tuple[dict, dict]:
     f = {"name": focus.name, "lat": focus.lat, "lon": focus.lon, "cell_m": focus.cell_m,
          "n_rows": focus.n_rows, "n_cols": focus.n_cols,
          "width_m": focus.n_cols * focus.cell_m, "height_m": focus.n_rows * focus.cell_m, **b}
-    d = {"n_rows": domain.n_rows, "n_cols": domain.n_cols, "margin": domain.margin, **db}
+    d = {"n_rows": domain.n_rows, "n_cols": domain.n_cols, "margin": domain.margin, **db,
+         "m_north": domain.m_north, "m_south": domain.m_south, "m_west": domain.m_west, "m_east": domain.m_east}
     return f, d
+
+
+def _extent_m(focus: FocusArea, domain: SimulationDomain) -> dict:
+    """Domain extent around the focus centre in metres (west, east, south, north)."""
+    hx, hy = focus.n_cols * focus.cell_m / 2.0, focus.n_rows * focus.cell_m / 2.0
+    c = focus.cell_m
+    return {"xw": hx + domain.m_west * c, "xe": hx + domain.m_east * c,
+            "ys": hy + domain.m_south * c, "yn": hy + domain.m_north * c}
+
+
+def study_region_payload(region) -> Optional[dict]:
+    if region is None:
+        return None
+    return {"name": region.name, "status": region.status, "label": region.label, "outline": region.outline()}
+
+
+def land_cover_layer(classes: Optional[np.ndarray], label: str = "", status: str = "", notes=None,
+                     summary: str = "") -> Optional[dict]:
+    """Sparse non-fuel / unverified cells by class for the map's Land cover layer."""
+    if classes is None:
+        return None
+    DEGRADED_TITLE, UNAVAILABLE_TITLE = "DEGRADED LAND-COVER MODE", "LAND-COVER DATA UNAVAILABLE"  # no module import
+    flat = classes.ravel()
+    title = {"full": "fused", "degraded": DEGRADED_TITLE, "unavailable": UNAVAILABLE_TITLE,
+             "context": "CONTEXT ONLY (not a fire barrier)"}.get(status, "no fuel")
+    return {"label": label, "status": status, "statusTitle": title, "summary": summary,
+            "cells": {str(int(k)): np.flatnonzero(flat == k).tolist() for k in np.unique(flat) if int(k) != 0}}
 
 
 def _uid(payload: dict) -> str:
@@ -86,10 +114,17 @@ def _uid(payload: dict) -> str:
 
 
 def _playback_seconds_per_step(end_t: float) -> float:
-    """Playback pacing at 1x: long runs take ~1 s per CA step, short runs are
-    stretched so they still last at least ~8 s on screen."""
+    """Legacy pacing at 1x (kept for callers): ~1 s per CA step, at least ~8 s."""
     total = float(np.clip(8 + end_t * 1.1, 8, 70))
     return total / max(end_t, 1e-6)
+
+
+def playback_seconds_1x(duration_minutes: float) -> float:
+    """Wall-clock length of the whole playback at 1x: one simulated minute per
+    second, at least 12 s (very short runs) and at most 120 s (long runs).
+    Playback speed (1x / 2x / 5x) only changes this display time - never the
+    computed fire (the run is computed once, for the selected simulated time)."""
+    return float(np.clip(float(duration_minutes), 12.0, 120.0))
 
 
 # ── payloads ──────────────────────────────────────────────────────────────── #
@@ -101,10 +136,15 @@ def setup_payload(focus: FocusArea, duration_minutes: float, wind_speed_ms: floa
                   hotspot_summary: str = "", ignition_kind: str = "hypothetical",
                   observed_points: Optional[Sequence[Tuple[float, float]]] = None,
                   ignition_label: str = "", max_picks: Optional[int] = None,
-                  nonfuel_cells: Optional[List[int]] = None, picks_only_for_map_points: bool = False) -> dict:
+                  nonfuel_cells: Optional[List[int]] = None, picks_only_for_map_points: bool = False,
+                  nonfuel_classes: Optional[dict] = None, land_layer: Optional[dict] = None,
+                  study_region: Optional[dict] = None, domain: Optional[SimulationDomain] = None,
+                  domain_size: Optional[Tuple[float, float]] = None, domain_independent: bool = False) -> dict:
     """ignition_kind: "hypothetical" (placement / map points, the default),
-    "observed" (only `observed_points`: valid NASA FIRMS cells) or "none"."""
-    domain = domain_for(focus, duration_minutes)
+    "observed" (only `observed_points`: valid NASA FIRMS cells) or "none".
+    The map shows the set-up coverage: the initial simulation domain, whose
+    land cover is loaded for validating clicked ignition points."""
+    domain = domain or initial_domain(focus, duration_minutes)
     f, d = _geometry(focus, domain)
     preview, picks = _ignition_preview(domain, ignition_kind, n_ignition, placement, wind_speed_ms, wind_from_deg,
                                        ignition_points, observed_points, picks_only_for_map_points)
@@ -116,6 +156,15 @@ def setup_payload(focus: FocusArea, duration_minutes: float, wind_speed_ms: floa
          "wind": [[round(float(wind_speed_ms), 2), round(float(wind_from_deg) % 360, 1)]],
          "metrics": [], "layers": layers, "hotspots": _display_hotspots(hotspots), "hotspotKind": hotspot_kind,
          "hotspotSummary": hotspot_summary}
+    if domain_size:
+        p["domainSize"] = [float(domain_size[0]), float(domain_size[1])]
+    p["domainIndependent"] = bool(domain_independent)     # drawn on the map: does not follow the focus area
+    if nonfuel_classes:
+        p["nonfuelClasses"] = nonfuel_classes
+    if land_layer:
+        p["landCover"] = land_layer
+    if study_region:
+        p["studyRegion"] = study_region
     p["uid"] = _uid(p)
     return p
 
@@ -127,8 +176,10 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
                 hotspot_summary: str = "", ignition_kind: str = "hypothetical",
                 observed_points: Optional[Sequence[Tuple[float, float]]] = None, ignition_label: str = "",
                 max_picks: Optional[int] = None, nonfuel_cells: Optional[List[int]] = None,
-                picks_only_for_map_points: bool = False) -> dict:
-    domain = result.domain if result is not None else domain_for(focus, duration_minutes)
+                picks_only_for_map_points: bool = False, nonfuel_classes: Optional[dict] = None,
+                study_region: Optional[dict] = None, domain: Optional[SimulationDomain] = None,
+                hud: Optional[dict] = None) -> dict:
+    domain = result.domain if result is not None else (domain or initial_domain(focus, duration_minutes))
     f, d = _geometry(focus, domain)
     preview, picks = _ignition_preview(domain, ignition_kind, n_ignition, placement, wind_speed_ms, wind_from_deg,
                                        ignition_points, observed_points, picks_only_for_map_points)
@@ -148,10 +199,15 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
         end_t = result.end_step
         keys = ("minutes", "burning", "burned", "burned_ha", "fire_area_ha", "perimeter_m", "front_distance_m",
                 "ros_m_per_min", "intensity_class", "mean_intensity", "max_intensity", "centroid_lat",
-                "centroid_lon", "left_focus", "burned_in_focus")
+                "centroid_lon", "left_focus", "burned_in_focus", "burned_ha_bandipur",
+                "burned_ha_regional_extension", "max_intensity_kw_m")
         p.update({
             "hasRun": True, "stepMin": result.step_minutes, "endT": round(end_t, 4),
-            "lastStep": int(result.history[-1].step), "secPerStep": round(_playback_seconds_per_step(end_t), 3),
+            "lastStep": int(result.history[-1].step),
+            "secPerStep": round(playback_seconds_1x(duration_minutes) / max(end_t, 1e-6), 4),
+            "playback1x": round(playback_seconds_1x(duration_minutes), 2),
+            "model": result.params.get("model", "legacy-ca"),
+            "extinguishedAt": result.params.get("extinguished_at_min"),
             "cells": cells.tolist(), "ign": ign[cells].astype(int).tolist(),
             "out": result.burnout_step.ravel()[cells].astype(int).tolist(),
             "inten": np.round(result.intensity.ravel()[cells], 2).tolist(),
@@ -159,7 +215,33 @@ def sim_payload(focus: FocusArea, duration_minutes: float, result: Optional[Loca
             "wind": [[round(float(s), 2), round(float(dg), 1)] for s, dg in result.wind_schedule],
             "metrics": [{k: x.get(k) for k in keys} for x in result.metrics],
             "landCover": _land_cover_payload(result),
+            "expansions": [{"step": e["step"], "minutes": e["minutes"], "new": e["new"]} for e in result.expansions],
+            "initialDomain": _extent_m(focus, result.initial_domain) if result.initial_domain is not None else None,
+            "extentLimit": ({**result.extent_limit, "step": round(result.extent_limit["step"], 3)}
+                            if result.extent_limit else None),
         })
+        if getattr(result, "ignition_time", None) is not None:
+            # exact simulated ignition / burn-out time (in frames) of every burned cell: smooth playback
+            fm = result.step_minutes
+            it = result.ignition_time.ravel()[cells] / fm
+            ot = result.burnout_time.ravel()[cells]
+            ot = np.where(ot >= 0, ot / fm, -1.0)
+            p["ignT"] = np.round(it, 3).tolist()
+            p["outT"] = np.round(ot, 3).tolist()
+        reg = result.study_region
+        if reg and reg.get("crossing_step") is not None and not reg.get("ignition_outside_region"):
+            p["crossing"] = {"step": reg["crossing_step"], "minutes": reg["crossing_minutes"],
+                             "lat": reg.get("crossing_lat"), "lon": reg.get("crossing_lon")}
+        if result.inside_region is not None:
+            outside = (result.ignition_step >= 0) & ~result.inside_region
+            p["outsideBurned"] = np.flatnonzero(outside.ravel()).tolist()
+    if nonfuel_classes:
+        p["nonfuelClasses"] = nonfuel_classes
+    if study_region:
+        p["studyRegion"] = study_region
+    for k, v in (hud or {}).items():          # concise HUD: mode, ML risk, ignition, report ID, stale-data note
+        if v is not None:
+            p[k] = v
     p["uid"] = _uid(p)
     return p
 
@@ -212,9 +294,13 @@ def _land_cover_payload(result: LocalSpreadResult) -> Optional[dict]:
     lc = getattr(result, "land_cover", None)
     if lc is None:
         return None
-    flat = lc.ravel()
-    return {"label": result.land_cover_label,
-            "cells": {str(int(k)): np.flatnonzero(flat == k).tolist() for k in np.unique(flat) if int(k) != 0}}
+    summary = ""
+    conf = getattr(result, "land_confidence", None)
+    if conf is not None:
+        from src.landcover.fusion import CONF_NAMES
+        summary = "Confidence (source agreement): " + ", ".join(
+            f"{CONF_NAMES[k]} {int((conf == k).sum())}" for k in (3, 2, 1) if (conf == k).any())
+    return land_cover_layer(lc, result.land_cover_label, getattr(result, "land_status", ""), summary=summary)
 
 
 _SEV_CODE = {"LOW": 0, "MODERATE": 1, "HIGH": 2, "EXTREME": 3}

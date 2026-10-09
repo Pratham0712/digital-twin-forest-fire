@@ -10,7 +10,8 @@ risk state the fire spreads under:
     st.session_state["twin"]), live or demo per the sidebar.
   - "Custom weather scenario": an isolated scenario twin built on this page.
 The regional 2-hour projection on the 0.1 deg grid (the original animated CA
-heatmap) is kept below the map for every mode.
+heatmap) is kept below the map, except in LIVE REAL-WORLD mode: it ignites the
+model's risk zones, and risk is not an observed fire (audit BUG #3).
 """
 import sys
 from pathlib import Path
@@ -21,7 +22,8 @@ import streamlit as st
 
 from src.dashboard.dashboard_common import (
     set_page, build_sidebar, ensure_twin, get_twin, render_header,
-    render_ca_simulation, render_scenario_controls, log_action, _region_key,
+    render_ca_simulation, render_scenario_controls, log_action, _region_key, render_live_no_risk_ignition,
+    render_study_region_summary,
 )
 from src.dashboard.geo_spread import (SPREAD_MODES, default_setup, get_setup, render_applied_scenario_bar,
                                      render_geo_spread)
@@ -42,15 +44,28 @@ if st.session_state.get("spread_mode") not in SPREAD_MODES:
     st.session_state["spread_mode"] = SPREAD_MODES[0] if cfg else SPREAD_MODES[1]
 
 render_header(summary, offline, "Fire Spread Simulation", region=twin.region)
+render_study_region_summary(twin)
 
 st.markdown('<div class="sec-hdr">Simulate from</div>', unsafe_allow_html=True)
 mode = st.radio("Source of the risk state to spread from", SPREAD_MODES, horizontal=True,
                 label_visibility="collapsed", key="spread_mode")
 
 
-def _regional_projection(t, key_prefix: str):
-    with st.expander("Regional 2-hour projection (0.1° grid, ~11 km cells)"):
-        render_ca_simulation(t, key_prefix=key_prefix, allow_force_ignite=True)
+def _regional_projection(t, key_prefix: str, hypothetical: bool = False):
+    """The regional 0.1-degree projection ignites the model's HIGH/EXTREME risk
+    zones. LIVE REAL-WORLD: never (audit BUG #3 - risk is not fire; enforced in
+    DigitalTwin as well). Scenario / WHAT-IF: labelled HYPOTHETICAL IGNITION.
+    Force-ignite only in explicitly marked demo / offline mode."""
+    if getattr(t, "live_observed_only", False):
+        render_live_no_risk_ignition(t)
+        return
+    label = ("Regional 2-hour projection — HYPOTHETICAL IGNITION at the model's HIGH/EXTREME zones"
+             if hypothetical else "Regional 2-hour projection (0.1° grid, ~11 km cells)")
+    with st.expander(label):
+        st.caption("The regional CA ignites model risk zones (predictions, not observed fires). Its fuel value per "
+                   "11 km zone is a SYNTHETIC NDVI estimate; real land-cover fuel applies to the local simulation "
+                   "above.")
+        render_ca_simulation(t, key_prefix=key_prefix, allow_force_ignite=bool(offline))
 
 
 if mode == SPREAD_MODES[0]:
@@ -83,7 +98,10 @@ if mode == SPREAD_MODES[0]:
         render_geo_spread(sim_twin, key_prefix="applied", wind_speed_ms=float(cfg["wind_speed_ms"]),
                           wind_from_deg=float(cfg["wind_from_deg"]), wind_label=_wlabel,
                           setup=cfg["setup"], scenario=None if _live else cfg.get("scenario"), live=_live)
-        _regional_projection(sim_twin, "applied_ca")
+        # A LIVE hand-off: the scenario twin is built from live observations; it must
+        # never ignite risk zones (backend flag, checked by DigitalTwin itself).
+        sim_twin.live_observed_only = (_live or {}).get("mode") == "live"
+        _regional_projection(sim_twin, "applied_ca", hypothetical=(_live or {}).get("mode") == "whatif")
 
 elif mode == SPREAD_MODES[1]:
     st.caption("Seeded from the same live/demo Digital Twin state as the Command Center.")
@@ -143,4 +161,4 @@ else:
     render_geo_spread(scn_twin, key_prefix="custom", wind_speed_ms=float(scenario_vals["wind_speed_ms"]),
                       wind_from_deg=float(scenario_vals["wind_from_deg"]), wind_label="Scenario wind",
                       setup=get_setup(scn_twin, kp="custom_set"), scenario=scenario_vals)
-    _regional_projection(scn_twin, "custom_scn")
+    _regional_projection(scn_twin, "custom_scn", hypothetical=True)

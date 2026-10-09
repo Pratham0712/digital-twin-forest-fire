@@ -65,12 +65,14 @@ def test_validation_limits():
 
 
 def test_time_step_and_duration():
-    r = run_local_spread(BANDIPUR, COND, 6.0, 225.0, seed=1, duration_minutes=60)
+    # Phase 3: legacy-CA time axis (3.75 min steps at 25 m). The default "ros" model uses frames of
+    # frame_minutes_for(duration) - covered by test_phase3_model.py::test_duration_*.
+    r = run_local_spread(BANDIPUR, COND, 6.0, 225.0, seed=1, duration_minutes=60, model="legacy")
     assert r.step_minutes == pytest.approx(step_minutes_for(25)) == pytest.approx(3.75)
     assert r.history[1].minutes_elapsed == pytest.approx(3.75)
     assert len(r.wind_schedule) == n_steps_for(60, 25) == 16
     assert r.end_step == pytest.approx(min(16.0, r.history[-1].step))
-    short = run_local_spread(BANDIPUR, COND, 6.0, 225.0, seed=1, duration_minutes=1)
+    short = run_local_spread(BANDIPUR, COND, 6.0, 225.0, seed=1, duration_minutes=1, model="legacy")
     assert short.end_step == pytest.approx(1 / 3.75)              # playback ends at 1 simulated minute
 
 
@@ -84,7 +86,9 @@ def test_same_transforms_as_regional_twin():
 
 
 def test_lifecycle_and_states_come_from_the_ca():
-    r = run_local_spread(BANDIPUR, COND, 6.0, 225.0, seed=3, duration_minutes=60)
+    # legacy CA: a cell burns for exactly one step (the "ros" model keeps a cell burning while it still
+    # spreads - see test_phase3_model.py::test_ros_lifecycle)
+    r = run_local_spread(BANDIPUR, COND, 6.0, 225.0, seed=3, duration_minutes=60, model="legacy")
     ign, out = r.ignition_step, r.burnout_step
     assert (ign >= 0).sum() >= r.params["n_ignition"]
     finished = out >= 0
@@ -117,7 +121,10 @@ def _centroid_shift(wind_from):
         r = run_local_spread(BANDIPUR, COND, 8.0, wind_from, placement="Centre", seed=seed, duration_minutes=60)
         early = (r.ignition_step >= 0) & (r.ignition_step <= 6)
         rr, cc = np.where(early)
-        shifts.append(((r.domain.n_rows - 1) / 2 - rr.mean(), cc.mean() - (r.domain.n_cols - 1) / 2))   # (north, east)
+        # Phase 3: relative to the ignition cells, not the domain centre - the faster "ros" fire makes the
+        # adaptive domain grow asymmetrically, which moves the domain centre
+        r0, c0 = np.argwhere(r.ignition_step == 0).mean(axis=0)
+        shifts.append((r0 - rr.mean(), cc.mean() - c0))   # (north, east)
     return np.mean(shifts, axis=0)
 
 
@@ -157,20 +164,32 @@ def test_map_point_ignition_maps_lat_lon_to_the_containing_cell():
     assert m.sum() == 1 and m[r, c]
     res = run_local_spread(BANDIPUR, COND, 6.0, 225.0, placement="Map points", ignition_points=pts, seed=0,
                            duration_minutes=60)
-    assert res.ignition_step[r, c] == 0
+    # The run's domain may have grown to the north / west while the fire spread
+    # (adaptive domain, audit BUG #1 fix), so the cell is looked up in the
+    # result's own domain; it is still exactly the clicked cell, lit at step 0.
+    rr, rc = res.domain.cell_of(*pts[0])
+    assert (rr - res.domain.m_north, rc - res.domain.m_west) == (r - d.m_north, c - d.m_west)
+    assert res.ignition_step[rr, rc] == 0 and int((res.ignition_step == 0).sum()) == 1
     assert ignition_mask(d, 3, "Map points", 6, 225, [(0.0, 0.0)]).sum() == 3   # outside: falls back to centre
 
 
 def test_forecast_schedule_is_resampled_to_local_steps():
     sched = [(2.0, 90.0)] * 4 + [(9.0, 270.0)] * 4                  # 15-min entries over 2 h
-    r = run_local_spread(BANDIPUR, COND, 0, 0, seed=0, wind_schedule_15min=sched, duration_minutes=120)
+    r = run_local_spread(BANDIPUR, COND, 0, 0, seed=0, wind_schedule_15min=sched, duration_minutes=120,
+                         model="legacy")
     assert r.wind_schedule[0] == (2.0, 90.0)
     assert r.wind_schedule[-1] == (9.0, 270.0)
     assert len(r.wind_schedule) == 32
+    # default "ros" model: one wind entry per playback frame, same forecast
+    q = run_local_spread(BANDIPUR, COND, 0, 0, seed=0, wind_schedule_15min=sched, duration_minutes=120)
+    assert q.wind_schedule[0] == (2.0, 90.0) and q.wind_schedule[-1] == (9.0, 270.0)
+    assert len(q.wind_schedule) == round(120 / q.step_minutes)
 
 
 def test_zone_conditions_pick_the_zone_containing_the_point():
-    df = pd.DataFrame({"zone_id": ["A", "B"], "latitude": [11.65, 11.75], "longitude": [76.65, 76.65],
+    # zones placed relative to the Bandipur preset (Phase 3 moved the preset to a forest interior)
+    la, lo = round(BANDIPUR.lat, 2), round(BANDIPUR.lon, 2)
+    df = pd.DataFrame({"zone_id": ["A", "B"], "latitude": [la, la + 0.1], "longitude": [lo, lo],
                        "ffmc": [90, 80], "bui": [10, 20], "fwi": [5, 6], "ndvi": [0.4, 0.5],
                        "wx_temperature_c": [30, 31], "wx_humidity_pct": [40, 41],
                        "wx_wind_speed_ms": [4, 5], "wx_wind_deg": [200, 210]})

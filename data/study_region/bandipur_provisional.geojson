@@ -1,0 +1,41 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Bandipur Tiger Reserve",
+    "status": "APPROXIMATE / PROVISIONAL",
+    "source": "NTCA brief note: published latitude/longitude extent (bounding box)",
+    "note": "APPROXIMATE / PROVISIONAL boundary for development and testing only: this is the published latitude/longitude EXTENT of the reserve (a box), not the notified Tiger Reserve boundary. It over-covers the 1,456 km2 reserve, so inside/outside near the real boundary is not reliable. Replace it by putting the official boundary at data/study_region/bandipur_official.geojson (or .kml / .shp)."
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       76.204722,
+       11.592778
+      ],
+      [
+       76.858889,
+       11.592778
+      ],
+      [
+       76.858889,
+       11.917222
+      ],
+      [
+       76.204722,
+       11.917222
+      ],
+      [
+       76.204722,
+       11.592778
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

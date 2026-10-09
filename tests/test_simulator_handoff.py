@@ -38,7 +38,9 @@ def test_apply_and_open_transfers_the_scenario(app):
     cfg = app.session_state["simulation_config"]
     assert cfg["forest"] == "Bandipur Tiger Reserve"
     assert cfg["wind_from_deg"] == 90 and cfg["temp_c"] == 41
-    assert cfg["latitude"] == pytest.approx(11.6667) and cfg["longitude"] == pytest.approx(76.6333)
+    from src.simulation.local_spread import FOCUS_AREAS
+    bp = FOCUS_AREAS["Bandipur Tiger Reserve"]                 # Phase 3: preset moved to a forest interior
+    assert cfg["latitude"] == pytest.approx(bp.lat) and cfg["longitude"] == pytest.approx(bp.lon)
     assert cfg["width_m"] == 500 and cfg["height_m"] == 500 and cfg["cell_m"] == 25
     assert cfg["duration_min"] == 60 and cfg["setup"]["layers"] == {"grid": True, "boundary": True}
     assert cfg["selected_location"]["source"] == "preset"

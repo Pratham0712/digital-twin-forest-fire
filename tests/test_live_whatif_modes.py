@@ -27,7 +27,9 @@ from tests.conftest import ExternalNetworkBlocked
 DASH = Path(__file__).resolve().parents[1] / "src" / "dashboard"
 WHATIF = "pages/1_What_If_Simulator.py"
 SPREAD = "pages/2_Spread_Simulation.py"
-BANDIPUR = (11.6667, 76.6333)                      # default What-If location (preset)
+from src.simulation.local_spread import FOCUS_AREAS as _FA
+# default What-If location = the Bandipur preset (Phase 3: forest interior, read from the preset itself)
+BANDIPUR = (_FA["Bandipur Tiger Reserve"].lat, _FA["Bandipur Tiger Reserve"].lon)
 OPEN = "Apply Scenario & Open Spread Simulation"
 INPUT_LABEL = {"temp_c": "Temperature", "humidity_pct": "Relative humidity", "wind_speed_ms": "Wind speed",
                "wind_from_deg": "Wind direction"}

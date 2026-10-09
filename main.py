@@ -66,7 +66,12 @@ def run_pipeline(retrain: bool = False):
         print("  No zones currently above the alert threshold.")
 
     logger.info("Step 4: Running Cellular Automata spread simulation from HIGH/EXTREME zones...")
-    history = twin.simulate_spread_from_alerts()
+    if getattr(twin, "live_observed_only", False):
+        # LIVE data: risk zones are predictions, not fires - no fire is simulated from them
+        logger.info("LIVE data: no spread simulation from risk zones (only observed detections ignite).")
+        history = []
+    else:
+        history = twin.simulate_spread_from_alerts()
 
     print(f"\n{'='*70}\n  FIRE SPREAD PROJECTION\n{'='*70}")
     if history:

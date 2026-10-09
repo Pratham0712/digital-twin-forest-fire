@@ -130,23 +130,26 @@ def test_06_point_outside_the_domain_is_rejected():
     s = _setup(n=3)
     msgs = _click(s, [[BANDIPUR[0] + 0.05, BANDIPUR[1]]])                  # ~5.5 km north
     assert s["ignition_points"] == [] and msgs == [HYP_OUTSIDE]
-    assert HYP_OUTSIDE == "Select an ignition point inside the simulation area."
+    # Phase 3 (issue 6): the message names the SIMULATION DOMAIN (not the focus area) and what to do
+    assert HYP_OUTSIDE.startswith("Outside the simulation domain")
     html = (DASH / "components" / "fire_map" / "index.html").read_text(encoding="utf-8")
-    assert "toast('Select an ignition point inside the simulation area.')" in html
+    assert "toast('Outside the simulation domain (" in html
 
 
-def test_07_non_fuel_point_is_rejected():
+def test_07_non_fuel_point_is_accepted_and_labelled():
+    # FINAL requirements (Priority 3C): a HYPOTHETICAL ignition is never rejected because of land cover; the
+    # mapped surface is reported and labelled as known land cover instead.
     s = _setup(n=3)
     land = _land(s, water_at=PTS[0])
     msgs = _click(s, PTS, land)
-    assert s["ignition_points"] == PTS[1:] and msgs == [HYP_NON_FUEL]
-    assert HYP_NON_FUEL == "Selected location is non-burnable. Choose a fuel cell."
+    assert s["ignition_points"] == PTS and msgs == []
+    assert [c["label"] for c in s["ignition_checks"]][0] == "WATER"
     f = focus_from_setup(s)
     p = setup_payload(f, 60, 3, 240, 3, "Map points", s["ignition_points"], s["layers"], "K", "",
                       **_map_ignition_args(lm.ignition_spec(lm.WHATIF, s, None), s, land))
     dom = domain_for(f, 60)
     r, c = dom.cell_of(*PTS[0])
-    assert p["nonfuelCells"] == [r * dom.n_cols + c] and p["maxPicks"] == 3     # the map rejects it too
+    assert p["nonfuelCells"] == [r * dom.n_cols + c] and p["maxPicks"] == 3     # known land cover sent for display
 
 
 # 8 ─────────────────────────────────────────────────────────────────────────

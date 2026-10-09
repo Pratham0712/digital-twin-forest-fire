@@ -51,8 +51,14 @@ def classify_detections(domain, detections: Iterable[dict], land_cover=None,
             rec.update(status=OUTSIDE, reason="outside the selected simulation area")
         elif zone_non_fuel:
             rec.update(status=NON_FUEL, reason="zone vegetation index below the fuel threshold (NDVI < 0.15)")
+        elif hasattr(land_cover, "classify") and not land_cover.classify(lat, lon).accepted:
+            chk = land_cover.classify(lat, lon)
+            rec.update(status=NON_FUEL, reason=f"{chk.label.lower()} at the detection point ({chk.evidence}); "
+                                               "kept as an observation, not ignited")
         elif classes is not None and int(classes[rc]) != FUEL:
-            rec.update(status=NON_FUEL, reason=f"{CLASS_NAMES.get(int(classes[rc]), 'non-fuel')} cell (OpenStreetMap)")
+            src = "OpenStreetMap" if getattr(land_cover, "source", "") == "osm" else "land cover"
+            rec.update(status=NON_FUEL, reason=f"{CLASS_NAMES.get(int(classes[rc]), 'non-fuel')} cell ({src}); "
+                                               "kept as an observation, not ignited")
         else:
             rec.update(status=IGNITION, reason="valid fuel cell")
             cells.add(tuple(rc))

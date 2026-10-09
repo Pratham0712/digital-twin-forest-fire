@@ -35,6 +35,24 @@ def _no_land_cover_downloads(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _offline_land_cover_fixture(monkeypatch, tmp_path):
+    """OFFLINE TEST FIXTURE for the fused land cover: a synthetic
+    WorldCover-format raster of uniform tree cover (labelled as a fixture, never
+    real data) and no Sentinel-2 NDVI, so simulations in the suite run without
+    downloads. OpenStreetMap still comes only from the existing disk cache.
+    Tests of the pipeline itself replace these loaders explicitly."""
+    from tests.landcover_fixtures import unavailable_loader, wc_loader
+    from src.landcover import provider, sentinel2_ndvi, tile_cache, worldcover
+    monkeypatch.setenv("FIRE_LANDCOVER_CACHE_DIR", str(tmp_path / "landcover_tiles"))
+    monkeypatch.setattr(worldcover, "load_window", wc_loader(10))
+    monkeypatch.setattr(sentinel2_ndvi, "load_window", unavailable_loader("offline test: no Sentinel-2 fixture"))
+    provider.clear_memory_cache()
+    tile_cache.clear_failures()
+    yield
+    provider.clear_memory_cache()
+
+
+@pytest.fixture(autouse=True)
 def _no_real_api_keys(monkeypatch):
     """Blank the FIRMS / OpenWeatherMap keys loaded from the developer's .env,
     so no test silently runs in real-data mode with real credentials."""

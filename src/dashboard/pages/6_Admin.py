@@ -72,7 +72,18 @@ def _ist_table(rows) -> pd.DataFrame:
     return df
 
 
-tab_users, tab_history, tab_notify = st.tabs(["Users", "Stored history", "Notifications"])
+tab_users, tab_history, tab_notify, tab_emerg = st.tabs(["Users", "Stored history", "Notifications",
+                                                         "Emergency alerts"])
+
+with tab_emerg:
+    from src.dashboard.ui.alerts_ui import render_alert_history, render_recipient_admin
+    st.subheader("Emergency-alert recipients")
+    st.caption("Opt-in only: nothing is sent automatically. Alerts are sent from a completed simulation (Spread "
+               "Simulation → Send Emergency Alert) after a review and an explicit confirmation, only to enabled "
+               "recipients on verified channels.")
+    render_recipient_admin()
+    st.subheader("Alert history and delivery status")
+    render_alert_history()
 
 with tab_users:
     st.subheader("Accounts")

@@ -123,7 +123,9 @@ def test_fire_stops_at_the_river():
 def test_fuel_areas_behave_exactly_as_before():
     dur = 30
     dom = domain_for(BANDIPUR, dur)
-    kw = dict(n_ignition=3, placement="Upwind edge", seed=11, duration_minutes=dur)
+    # expand=False: with a land-cover layer and no provider the domain cannot grow, without one it can;
+    # the faster Phase 3 fire reaches the edge, so both runs keep the same domain to compare like with like
+    kw = dict(n_ignition=3, placement="Upwind edge", seed=11, duration_minutes=dur, expand=False)
     a = run_local_spread(BANDIPUR, COND, 6.0, 225.0, **kw)
     b = run_local_spread(BANDIPUR, COND, 6.0, 225.0, land_cover=all_fuel((dom.n_rows, dom.n_cols)), **kw)
     assert np.array_equal(a.ignition_step, b.ignition_step) and np.array_equal(a.burnout_step, b.burnout_step)

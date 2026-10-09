@@ -576,19 +576,25 @@ def _control_tag(key: str, locked: bool, slider_value, base_value, baseline: Opt
 
 def plan_ignition(mode: str, setup: dict, focus, cond: dict, detections: Optional[list], firms_status: str,
                   allow_fetch: bool = True) -> dict:
-    """Classify the real detections against the simulation area and the fuel
-    mask, and decide the ignition. The OpenStreetMap land cover is only needed
-    (and fetched) when a detection lies inside the area."""
-    from src.simulation.fuel_map import all_fuel, domain_land_cover
-    from src.simulation.local_spread import ca_inputs_from_conditions, domain_for
+    """Classify the real detections against the simulation area and decide the
+    ignition. The LIGHTWEIGHT ignition-point check (OpenStreetMap, cached;
+    src/simulation/ignition_site.py) is only loaded when a detection lies inside
+    the area or a hypothetical ignition is set. It only decides whether a point
+    may ignite - it is never a fire-propagation mask. The coverage is the
+    initial simulation domain."""
+    from src.simulation.fuel_map import all_fuel
+    from src.simulation.ignition_site import IgnitionSiteClassifier
+    from src.simulation.local_spread import (ca_inputs_from_conditions, domain_size_from_setup, initial_domain,
+                                             limits_from_setup)
     from src.simulation.observed_ignition import classify_detections
-    dom = domain_for(focus, setup["duration_min"])
+    dom = initial_domain(focus, setup["duration_min"], domain_size_m=domain_size_from_setup(setup),
+                         limits=limits_from_setup(setup))
     dets = list(detections or []) if firms_status in ("live", "cached") else []
     zone_nf = bool(ca_inputs_from_conditions(cond)["non_fuel"])
     cls = classify_detections(dom, dets, None, zone_non_fuel=zone_nf)
     land = None
     if cls["n_in_area"] or ignition_source(mode, setup) == IGN_HYPOTHETICAL:
-        land = domain_land_cover(dom, allow_fetch=allow_fetch)   # also validates hypothetical clicks
+        land = IgnitionSiteClassifier.for_domain(dom, allow_fetch=allow_fetch)   # validates ignition points
         cls = classify_detections(dom, dets, land, zone_non_fuel=zone_nf)
     ign = ignition_spec(mode, setup, cls)
     ign["cells"] = [list(rc) if rc else None for rc in (dom.cell_of(float(a), float(b)) for a, b in ign["points"])]

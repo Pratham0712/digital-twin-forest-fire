@@ -54,7 +54,15 @@ from config.config import MODELS_DIR
 logger = logging.getLogger(__name__)
 
 FUEL, NON_FUEL, WATER, BUILT, ROAD = 0, 1, 2, 3, 4
-CLASS_NAMES = {FUEL: "fuel", NON_FUEL: "non-fuel (bare)", WATER: "water", BUILT: "built-up", ROAD: "road"}
+# UNKNOWN: no land-cover information for the cell (e.g. WorldCover unavailable and
+# no OpenStreetMap feature). Not confirmed vegetation: never burnable unless the
+# user explicitly runs in DEGRADED LAND-COVER MODE (src/landcover/provider.py).
+UNKNOWN = 5
+CLASS_NAMES = {FUEL: "fuel", NON_FUEL: "non-fuel (bare)", WATER: "water", BUILT: "built-up", ROAD: "road",
+               UNKNOWN: "unverified (no land-cover data)"}
+# short names used in ignition messages ("IGNITION REJECTED — ROAD")
+CLASS_TAGS = {FUEL: "FUEL", NON_FUEL: "BARE / NON-FUEL", WATER: "WATER", BUILT: "BUILT", ROAD: "ROAD",
+              UNKNOWN: "LAND COVER UNVERIFIED"}
 PRIORITY = (NON_FUEL, ROAD, BUILT, WATER)             # painted in this order; later wins
 
 LAND_COVER_DIR = MODELS_DIR / "land_cover"
@@ -89,25 +97,52 @@ QUERY = """[out:json][timeout:25];
   relation["natural"~"^(bare_rock|scree|sand)$"]({bb});
   way["landuse"="quarry"]({bb});
   way["aeroway"~"^(runway|taxiway|apron)$"]({bb});
+  way["natural"~"^(wood|scrub|heath|grassland|shrubbery)$"]({bb});
+  way["landuse"~"^(forest|meadow|grass|orchard)$"]({bb});
 );
 out geom;"""
+# v2: the query also returns mapped vegetation polygons (used only by the hypothetical
+# ignition-point check, src/simulation/ignition_site.py - never as a fire mask)
+QUERY_VERSION = "v2"
 
 
 @dataclass
 class LandCover:
-    classes: np.ndarray                     # (rows, cols) int8, FUEL / NON_FUEL / WATER / BUILT / ROAD
-    source: str                             # "osm" | "unavailable" | "none"
+    classes: np.ndarray                     # (rows, cols) int8, FUEL / NON_FUEL / WATER / BUILT / ROAD / UNKNOWN
+    source: str                             # "osm" | "fused" | "unavailable" | "none"
     label: str                              # human-readable provenance
     n_features: int = 0
     counts: Dict[str, int] = field(default_factory=dict)
+    # Fused land cover (src/landcover/provider.py); None for the legacy OSM-only mask.
+    status: str = ""                        # "full" | "degraded" | "unavailable"
+    fuel_load: Optional[np.ndarray] = None  # (rows, cols) relative fuel load 0-1 (0 on non-burnable cells)
+    fuel_source: Optional[np.ndarray] = None    # (rows, cols) int8, landcover.fusion.FUEL_SRC_*
+    confidence: Optional[np.ndarray] = None     # (rows, cols) int8 0 n/a, 1 LOW, 2 MEDIUM, 3 HIGH
+    source_mask: Optional[np.ndarray] = None    # (rows, cols) uint8 bits, landcover.fusion.SRC_*
+    fractions: Dict[str, np.ndarray] = field(default_factory=dict)
+    sources: Dict[str, dict] = field(default_factory=dict)     # per data source: status / error / dates
+    provenance: Dict[str, object] = field(default_factory=dict)
+    notes: List[str] = field(default_factory=list)
 
     @property
     def non_fuel(self) -> np.ndarray:
+        """Cells that can never burn (UNKNOWN included: unverified is not fuel)."""
+        return self.classes != FUEL
+
+    def non_burnable(self, allow_unverified: bool = False) -> np.ndarray:
+        """Non-fuel mask for the CA; allow_unverified=True (explicit DEGRADED
+        LAND-COVER MODE) lets UNKNOWN cells burn."""
+        if allow_unverified:
+            return (self.classes != FUEL) & (self.classes != UNKNOWN)
         return self.classes != FUEL
 
     @property
     def available(self) -> bool:
-        return self.source == "osm"
+        return self.source == "osm" or (self.source == "fused" and self.status in ("full", "degraded"))
+
+    @property
+    def has_unverified(self) -> bool:
+        return bool((self.classes == UNKNOWN).any())
 
 
 def all_fuel(shape: Tuple[int, int], source: str = "none", label: str = "No land-cover layer") -> LandCover:
@@ -203,8 +238,33 @@ def _points_in_ring(px: np.ndarray, py: np.ndarray, ring: np.ndarray) -> np.ndar
     return out
 
 
+def _clip_segment(x0, y0, x1, y1, xmin, ymin, xmax, ymax):
+    """Liang-Barsky clipping of a segment to a rectangle; None if outside."""
+    dx, dy = x1 - x0, y1 - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, x0 - xmin), (dx, xmax - x0), (-dy, y0 - ymin), (dy, ymax - y0)):
+        if p == 0:
+            if q < 0:
+                return None
+            continue
+        t = q / p
+        if p < 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+        if t0 > t1:
+            return None
+    return x0 + t0 * dx, y0 + t0 * dy, x0 + t1 * dx, y0 + t1 * dy
+
+
 def _supercover(x0: float, y0: float, x1: float, y1: float, n_rows: int, n_cols: int) -> List[Tuple[int, int]]:
     """Every grid cell the segment passes through (4-connected), clipped to the grid."""
+    # Clip to the grid (plus a one-cell border) first: a segment starting far outside
+    # the grid would otherwise exhaust the step cap before it reaches the grid.
+    clipped = _clip_segment(x0, y0, x1, y1, -1.0, -1.0, n_cols + 1.0, n_rows + 1.0)
+    if clipped is None:
+        return []
+    x0, y0, x1, y1 = clipped
     cells = []
     cx, cy = int(math.floor(x0)), int(math.floor(y0))
     ex, ey = int(math.floor(x1)), int(math.floor(y1))
@@ -344,22 +404,33 @@ def _snapped_bbox(b: Dict[str, float]) -> Tuple[float, float, float, float]:
 
 
 def _cache_path(bbox) -> Path:
-    key = hashlib.sha1(("v1:" + ",".join(f"{v:.4f}" for v in bbox)).encode()).hexdigest()[:16]
+    key = hashlib.sha1((QUERY_VERSION + ":" + ",".join(f"{v:.4f}" for v in bbox)).encode()).hexdigest()[:16]
     return LAND_COVER_DIR / f"osm_{key}.json"
 
 
-def fetch_osm(bbox: Tuple[float, float, float, float], allow_fetch: bool = True) -> Optional[dict]:
+def fetch_osm(bbox: Tuple[float, float, float, float], allow_fetch: bool = True,
+              timeout_s: float = TIMEOUT_S) -> Optional[dict]:
     """Overpass response for bbox (south, west, north, east), from the disk
     cache when present. None when unavailable."""
     path = _cache_path(bbox)
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("Ignoring unreadable land-cover cache %s (%s)", path.name, exc)
     key = path.name
     if os.getenv("FIRE_LAND_COVER_FETCH", "1") == "0":       # e.g. the test suite: never touch the network
         allow_fetch = False
+    cached = None
+    if path.exists():
+        try:
+            cached = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Ignoring unreadable land-cover cache %s (%s)", path.name, exc)
+    if cached is not None:
+        # Expiry (config.LandCoverConfig.osm_ttl_days): an old copy is refreshed when
+        # the network allows it; otherwise it is still used, flagged as stale, rather
+        # than losing the land cover to a temporary outage.
+        if not _expired(cached.get("fetched_utc")):
+            return cached
+        if not allow_fetch or time.time() - _FETCH_FAILED_AT.get(key, 0) < _RETRY_AFTER_S:
+            cached["_stale"] = True
+            return cached
     if not allow_fetch or time.time() - _FETCH_FAILED_AT.get(key, 0) < _RETRY_AFTER_S:
         return None
     import requests
@@ -367,7 +438,7 @@ def fetch_osm(bbox: Tuple[float, float, float, float], allow_fetch: bool = True)
     last = None
     for url in OVERPASS_URLS:
         try:
-            r = requests.post(url, data={"data": q}, timeout=TIMEOUT_S,
+            r = requests.post(url, data={"data": q}, timeout=timeout_s,
                               headers={"User-Agent": "forest-fire-digital-twin/1.0 (BMSCE capstone)"})
             r.raise_for_status()
             data = r.json()
@@ -375,14 +446,30 @@ def fetch_osm(bbox: Tuple[float, float, float, float], allow_fetch: bool = True)
                 raise ValueError("unexpected Overpass response")
             LAND_COVER_DIR.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({"bbox": bbox, "fetched_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                        "source": "OpenStreetMap (Overpass API)", "query_version": QUERY_VERSION,
                                         "elements": data["elements"]}), encoding="utf-8")
             logger.info("Land cover: %d OSM features for %s (cached in %s)", len(data["elements"]), bbox, path.name)
             return json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:                       # try the next mirror
             last = exc
     _FETCH_FAILED_AT[key] = time.time()
+    if cached is not None:
+        logger.warning("OpenStreetMap refresh failed for %s (%s); using the cached copy from %s.", bbox, last,
+                       str(cached.get("fetched_utc", ""))[:10])
+        cached["_stale"] = True
+        return cached
     logger.warning("Land-cover data unavailable for %s (%s); fire is not constrained by land cover.", bbox, last)
     return None
+
+
+def _expired(fetched_utc) -> bool:
+    from datetime import datetime, timezone
+    from config.config import LAND_COVER
+    try:
+        t = datetime.strptime(str(fetched_utc), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return True
+    return (datetime.now(timezone.utc) - t).total_seconds() > LAND_COVER.osm_ttl_days * 86400
 
 
 def domain_land_cover(domain, allow_fetch: bool = True) -> LandCover:

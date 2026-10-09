@@ -374,6 +374,11 @@ def build_sidebar(show_scenario: bool = False, show_offline: bool = True):
     st.sidebar.caption(f"{region.name}  ·  alert threshold {SYSTEM.alert_threshold_pct:.0f}%  ·  "
                         f"grid {region.grid_resolution_deg}° (~{cell_km:.0f} km cells)")
 
+    try:
+        from src.dashboard.ui.alerts_ui import render_inapp_alerts
+        render_inapp_alerts()                   # receiver-side alarm for signed-in users
+    except Exception:                           # alerts must never break a page
+        pass
     return offline, scenario, region, refresh
 
 
@@ -912,12 +917,62 @@ def render_alerts(alerts, summary: dict, limit: int = 15):
 
 # ── render: CA simulation ─────────────────────────────────────────────────── #
 
+NO_ACTIVE_FIRE = "NO ACTIVE FIRE DETECTED"
+HIGH_RISK_NO_FIRE = "HIGH FIRE-WEATHER RISK — NO ACTIVE FIRE DETECTED"
+
+
+def render_study_region_summary(twin: DigitalTwin):
+    """PRIMARY STUDY REGION (Bandipur Tiger Reserve) statistics from the
+    regional twin - kept separate from the rest of the region."""
+    from src.geo.study_region import load_study_region, zone_summary
+    snap = twin.current_snapshot
+    if snap is None:
+        return
+    try:
+        reg = load_study_region()
+        z = zone_summary(reg, snap.processed_grid, snap.risk_scores, snap.alerts,
+                         getattr(twin.ingestion, "last_hotspots", None))
+    except Exception:
+        return
+    if not z:
+        return
+    if z["zones"] == 0:
+        st.caption(f"Primary study region {z['name']} ({z['status']} boundary) lies outside the selected region's "
+                   "grid.")
+        return
+    det = "-" if z["detections"] is None else str(z["detections"])
+    st.caption(f"**Primary study region — {z['name']}** ({z['status']} boundary): {z['zones']} model zone(s) of "
+               f"0.1° · peak risk {z['peak_risk']:.0%} · mean {z['mean_risk']:.0%} (model prediction) · "
+               f"{z['alerts']} HIGH/EXTREME alert zone(s) · {det} satellite detection(s) inside the boundary.")
+
+
+def render_live_no_risk_ignition(twin: DigitalTwin):
+    """LIVE REAL-WORLD: the regional projection would ignite model risk zones
+    (predictions, not fires), so it is not run (audit BUG #3)."""
+    snap = twin.current_snapshot
+    high = bool(snap is not None and any(a.severity in ("HIGH", "EXTREME") for a in snap.alerts))
+    title = HIGH_RISK_NO_FIRE if high else NO_ACTIVE_FIRE
+    st.markdown(f'<div class="info-box"><b>{title}</b><br>LIVE REAL-WORLD mode: the regional 2-hour projection '
+                'ignites the model\'s HIGH/EXTREME risk zones, which are predictions, not observed fires, so it is '
+                'not run. High fire-weather risk does not create a fire. Fire spread at the selected location starts '
+                'only from observed NASA FIRMS detections (near-real-time satellite fire observation).</div>',
+                unsafe_allow_html=True)
+
+
 def render_ca_simulation(twin: DigitalTwin, key_prefix: str = "ca", allow_force_ignite: bool = True):
     """
     key_prefix keeps this page's two modes (current live/demo state vs a
     custom what-if scenario) from overwriting each other's stored animation
     in session_state - each mode gets its own ca_history slot.
+
+    allow_force_ignite: show "Force-ignite the 5 highest-risk zones" - callers
+    pass True only in explicitly marked DEMO / offline mode. A LIVE twin
+    (twin.live_observed_only) never ignites risk zones: the backend refuses it
+    (DigitalTwin raises LiveIgnitionForbidden) and this panel says why.
     """
+    if getattr(twin, "live_observed_only", False):
+        render_live_no_risk_ignition(twin)
+        return
     history_key = f"{key_prefix}_history"
 
     st.markdown('<div class="sec-hdr">Fire spread simulation — 2-hour projection</div>', unsafe_allow_html=True)

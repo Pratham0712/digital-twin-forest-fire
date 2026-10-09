@@ -20,6 +20,7 @@ copied into simulation_config["setup"] when the scenario is applied:
 from __future__ import annotations
 
 import io
+import logging
 import json
 import math
 import os
@@ -37,10 +38,14 @@ from src.dashboard.geo_fire_map import (duration_label, hotspots_near, missing_k
                                         render_fire_map, setup_payload, sim_payload)
 from src.dashboard.ui.live_panel import live_observations, map_hotspots, render_live_conditions
 from src.utils.timezone import format_ist
-from src.simulation.fuel_map import CLASS_NAMES, FUEL, domain_land_cover
-from src.simulation.local_spread import (DEFAULT_FOCUS, FOCUS_AREAS, HIGHEST_RISK_FOCUS, PLACEMENTS,
-                                         FocusArea, domain_elevation, domain_for, focus_options_for_region,
-                                         n_steps_for, resolve_focus, run_local_spread, step_minutes_for,
+from src.simulation.fuel_map import CLASS_NAMES, FUEL, UNKNOWN
+from src.simulation.local_spread import (DEFAULT_FOCUS, DOMAIN_AUTO, DOMAIN_CUSTOM, DOMAIN_MAP, DOMAIN_PRESETS,
+                                         domain_box_from_setup,
+                                         EXTENT_LIMIT_TITLE, FOCUS_AREAS, HIGHEST_RISK_FOCUS,
+                                         MAX_EXTENT_OPTIONS_M, PLACEMENTS, FocusArea, domain_elevation, domain_for,
+                                         domain_from_setup, domain_size_from_setup, focus_options_for_region,
+                                         frame_minutes_for, initial_domain, limits_from_setup, n_steps_for,
+                                         resolve_focus, run_local_spread, step_minutes_for, validate_domain,
                                          validate_setup, zone_conditions)
 
 SPREAD_PAGE = "pages/2_Spread_Simulation.py"
@@ -77,7 +82,8 @@ def default_setup(twin) -> dict:
     return {"location": _preset_location(first, twin), "width_m": float(SYSTEM.focus_size_m),
             "height_m": float(SYSTEM.focus_size_m), "cell_m": float(SYSTEM.local_ca_cell_m),
             "duration_min": 60.0, "placement": PLACEMENTS[0], "n_ignition": 3, "ignition_points": [],
-            "layers": {"grid": True, "boundary": True}}
+            "layers": {"grid": True, "boundary": True}, "domain_preset": DOMAIN_AUTO,
+            "domain_w_m": 2000.0, "domain_h_m": 2000.0, "max_extent_m": float(MAX_EXTENT_OPTIONS_M[-1])}
 
 
 def get_setup(twin, store_key: str = "sim_setup", kp: Optional[str] = None) -> dict:
@@ -85,7 +91,10 @@ def get_setup(twin, store_key: str = "sim_setup", kp: Optional[str] = None) -> d
     region starts at that region's first preset)."""
     s = st.session_state.get(store_key)
     if not s or s.get("region") != twin.region.name:
-        keep = {k: s[k] for k in ("width_m", "height_m", "cell_m", "duration_min", "layers")} if s else {}
+        keep = {k: s[k] for k in ("width_m", "height_m", "cell_m", "duration_min", "layers", "domain_preset",
+                                  "domain_w_m", "domain_h_m", "max_extent_m") if k in s} if s else {}
+        if keep.get("domain_preset") == DOMAIN_MAP:
+            keep["domain_preset"] = DOMAIN_AUTO              # a map-drawn domain does not follow a new region
         s = {**default_setup(twin), **keep, "region": twin.region.name}
         st.session_state[store_key] = s
         if kp:
@@ -104,48 +113,117 @@ def _snap(v: float, cell: float) -> float:
     return float(np.clip(round(v / cell) * cell, SYSTEM.focus_min_m, SYSTEM.focus_max_m))
 
 
-HYP_OUTSIDE = "Select an ignition point inside the simulation area."
-HYP_NON_FUEL = "Selected location is non-burnable. Choose a fuel cell."
+HYP_OUTSIDE = ("Outside the simulation domain — click inside the dashed amber SIMULATION DOMAIN box (it may be "
+               "outside the blue focus area), or enlarge the domain under Simulation domain.")
+HYP_NON_FUEL = "Ignition rejected — selected location is non-burnable. Choose a fuel cell."
+HYP_NO_MASK = ("LOCATION UNVERIFIED: OpenStreetMap is unavailable for this area, so clicked points cannot be "
+               "checked for roads, buildings or water. Hypothetical points are accepted as UNVERIFIED (not "
+               "confirmed vegetation).")
 
 
-def validate_hypothetical_points(points, setup: dict, land=None, messages: Optional[list] = None) -> list:
+def rejection_message(cls_code: int) -> str:
+    """Per-class rejection shown for a clicked non-burnable location."""
+    from src.simulation.ignition_site import LABELS, REJECT_HINT
+    return f"IGNITION REJECTED — {LABELS.get(int(cls_code), 'NON-BURNABLE')}. {REJECT_HINT}"
+
+
+def study_region():
+    """The primary study region (Bandipur Tiger Reserve) boundary, or None."""
+    from src.geo.study_region import load_study_region
+    try:
+        return load_study_region()
+    except Exception:                                   # a broken boundary file never breaks the simulation
+        return None
+
+
+def validate_hypothetical_points(points, setup: dict, land=None, messages: Optional[list] = None,
+                                 reasons: Optional[list] = None, notes: Optional[list] = None) -> list:
     """WHAT-IF hypothetical ignition points as clicked: kept exactly where they
-    are (never moved), only inside the simulation domain, only on fuel cells of
-    the existing fuel mask (fuel_map), and at most the requested ignition-cell
-    count. Rejections are reported in `messages`."""
-    from src.simulation.fuel_map import FUEL
-    dom = domain_for(focus_from_setup(setup), setup["duration_min"])
-    classes = getattr(land, "classes", None) if land is not None and getattr(land, "available", False) else None
-    if classes is not None and classes.shape != (dom.n_rows, dom.n_cols):
-        classes = None
+    are (never moved), only inside the set-up coverage (the initial simulation
+    domain), at most the requested ignition-cell count, and checked by the
+    LIGHTWEIGHT ignition-point check:
+
+      * `land` = IgnitionSiteClassifier (production): the clicked point is
+        tested against mapped OpenStreetMap features - road, building / built-up
+        area, water, bare ground -> rejected; mapped vegetation -> accepted;
+        anything else -> LOCATION UNVERIFIED, accepted with a warning;
+      * `land` = a LandCover grid (callers / tests that supply one): the cell's
+        class decides; UNKNOWN cells are LOCATION UNVERIFIED (accepted).
+
+    The check only decides whether a point may ignite. It is never a fire
+    mask: an accepted ignition spreads with the CA's own parameters.
+    Rejections go to `messages` (generic) and `reasons` (per class); accepted
+    points' outcomes (VEGETATION / LOCATION UNVERIFIED) go to `notes`."""
+    from src.simulation.ignition_site import LABELS, REJECT_HINT
+    dom = domain_from_setup(setup)          # the configured simulation domain (NOT the focus area)
+    msgs = messages if messages is not None else []
+    rs = reasons if reasons is not None else []
+    ns = notes if notes is not None else []
+    point_check = land is not None and hasattr(land, "classify")
+    classes = None
+    if not point_check and land is not None and getattr(land, "classes", None) is not None:
+        classes = land.classes if land.classes.shape == (dom.n_rows, dom.n_cols) else None
     n_max = int(setup.get("n_ignition") or 1)
-    out, msgs = [], messages if messages is not None else []
+    out, checks = [], []
     for lat, lon in points or []:
         rc = dom.cell_of(float(lat), float(lon))
         if rc is None:
             msgs.append(HYP_OUTSIDE)
-        elif classes is not None and int(classes[rc]) != FUEL:
-            msgs.append(HYP_NON_FUEL)
-        elif len(out) >= n_max:
+            continue
+        known = False
+        if point_check:
+            chk = land.classify(float(lat), float(lon))
+            ok, label, text = chk.accepted, chk.label, chk.message
+            evidence = chk.evidence
+        elif classes is not None:
+            code = int(classes[rc])
+            ok = code in (FUEL, UNKNOWN)
+            label = LABELS.get(code, "NON-BURNABLE")
+            evidence = "land-cover grid"
+            text = ("HYPOTHETICAL IGNITION ACCEPTED — VEGETATION" if code == FUEL else
+                    "LOCATION UNVERIFIED — the type of ground at this point is not known. The hypothetical "
+                    "ignition is accepted, but it is not confirmed vegetation.")
+        else:
+            ok, label, text = True, LABELS[UNKNOWN], ("LOCATION UNVERIFIED — no location information is loaded "
+                                                      "for this area. The hypothetical ignition is accepted, but "
+                                                      "it is not confirmed vegetation.")
+        if not ok:
+            # final requirements: a HYPOTHETICAL ignition is never rejected because of land cover - the known
+            # (mapped) surface is reported with its evidence and labelled, and the point is kept exactly
+            known = True
+            text = (f"HYPOTHETICAL IGNITION ACCEPTED ON MAPPED {label} — {evidence}. This is known land-cover "
+                    "information, not a fuel measurement; the simulated fire starts here as requested.")
+        if len(out) >= n_max:
             msgs.append(f"Maximum of {n_max} hypothetical ignition points reached.")
         else:
             out.append([float(lat), float(lon)])
+            ns.append(text)
+            checks.append({"lat": float(lat), "lon": float(lon), "label": label,
+                           "land_cover": "known (mapped)" if (known or label == "VEGETATION") else "unverified"})
+    if out or points == []:
+        setup["ignition_checks"] = checks
     return out
 
 
 def apply_map_event(ev: dict, setup: dict, twin, whatif: bool = False, land=None,
-                    messages: Optional[list] = None) -> bool:
+                    messages: Optional[list] = None, reasons: Optional[list] = None,
+                    notes: Optional[list] = None) -> bool:
     """Apply an event from the map component to the set-up. True if changed.
     whatif=True (LIVE DATA -> WHAT-IF, hypothetical ignition): clicked points are
     validated (domain, fuel mask, count) and "Clear points" keeps the Map points
     placement with 0 points selected instead of falling back to a placement rule."""
     if whatif and ev.get("kind") == "ignite":
-        pts = validate_hypothetical_points(ev.get("points") or [], setup, land, messages)
+        pts = validate_hypothetical_points(ev.get("points") or [], setup, land, messages, reasons, notes)
         setup["ignition_points"] = pts
         setup["placement"] = "Map points"
         setup["ignition_source"] = "hypothetical"
         return True
     kind = ev.get("kind")
+    if kind == "domain":
+        # the simulation domain was moved / resized on the map: its own bounds, the focus area is unchanged
+        setup["domain_box"] = {k: float(ev[k]) for k in ("north", "south", "east", "west")}
+        setup["domain_preset"] = DOMAIN_MAP
+        return True
     if kind == "area":
         loc = dict(setup["location"])
         moved = abs(loc["lat"] - ev["lat"]) > 1e-6 or abs(loc["lon"] - ev["lon"]) > 1e-6
@@ -195,6 +273,10 @@ def _sync_widgets(setup: dict, kp: str):
         st.session_state[f"{kp}_dur"] = "Custom"
         st.session_state[f"{kp}_dur_c"] = int(d)
     st.session_state[f"{kp}_loc"] = setup["location"].get("preset", CUSTOM_LOCATION)
+    st.session_state[f"{kp}_dpre"] = setup.get("domain_preset", DOMAIN_AUTO)
+    st.session_state[f"{kp}_dw"] = int(setup.get("domain_w_m", 2000))
+    st.session_state[f"{kp}_dh"] = int(setup.get("domain_h_m", 2000))
+    st.session_state[f"{kp}_dmax"] = int(setup.get("max_extent_m", MAX_EXTENT_OPTIONS_M[-1]) // 1000)
     st.session_state[f"{kp}_igsrc"] = setup.get("ignition_source", "none")
 
 
@@ -247,6 +329,8 @@ def render_setup_controls(twin, setup: dict, kp: str, show_location: bool = True
             dur = float(st.number_input("Custom duration (min)", 1, SYSTEM.max_duration_minutes, step=1, key=f"{kp}_dur_c"))
         else:
             dur = float(SYSTEM.duration_presets_minutes[dur_opts.index(dsel)])
+
+    dom_err = _render_domain_controls(setup, kp, float(cell), float(w), float(h), dur)
 
     q = st.columns(len(SIZE_PRESETS) + 1)
     q[0].caption("Quick size")
@@ -312,26 +396,72 @@ def render_setup_controls(twin, setup: dict, kp: str, show_location: bool = True
     elif placement == "Map points" and not setup["ignition_points"] and not hyp_locked:
         st.caption("No map points yet: click **Set ignition on map** on the map, then click inside the area. "
                     "Until then the centre is used.")
-    return validate_setup(setup["width_m"], setup["height_m"], cell, dur)
+    return validate_setup(setup["width_m"], setup["height_m"], cell, dur) or dom_err
+
+
+def _render_domain_controls(setup: dict, kp: str, cell: float, w: float, h: float, dur: float) -> Optional[str]:
+    """Simulation domain (Phase 3, issue 1): the grid the fire model runs on,
+    distinct from the focus area. Presets are real domain sizes."""
+    st.markdown("**Simulation domain** — the computational grid (dashed amber on the map), independent of the "
+                "focus area (solid blue). On the map: **Edit domain** to move / resize it (it may lie outside the "
+                "focus area), **Edit focus** for the focus area, **Pan map** to move the map, **Set ignition on "
+                "map** to place ignitions.")
+    if f"{kp}_dpre" not in st.session_state:
+        st.session_state[f"{kp}_dpre"] = setup.get("domain_preset", DOMAIN_AUTO)
+        st.session_state[f"{kp}_dw"] = int(setup.get("domain_w_m", 2000))
+        st.session_state[f"{kp}_dh"] = int(setup.get("domain_h_m", 2000))
+        st.session_state[f"{kp}_dmax"] = int(setup.get("max_extent_m", MAX_EXTENT_OPTIONS_M[-1]) // 1000)
+    d1, d2, d3, d4 = st.columns([1.5, 1, 1, 1])
+    pre = d1.selectbox("Domain size", list(DOMAIN_PRESETS), key=f"{kp}_dpre",
+                       help="Auto: focus area plus a margin for the selected duration. The presets are real "
+                            "domain sizes (square). The domain still grows while the fire spreads, up to the "
+                            "maximum extent.")
+    if pre == DOMAIN_MAP and domain_box_from_setup({**setup, "domain_preset": DOMAIN_MAP}) is None:
+        # start the map-drawn domain from the domain currently shown
+        cur = domain_from_setup({**setup, "domain_preset": setup.get("domain_preset") if
+                                 setup.get("domain_preset") != DOMAIN_MAP else DOMAIN_AUTO})
+        setup["domain_box"] = {k: round(v, 7) for k, v in cur.bounds.items()}
+    custom = pre == DOMAIN_CUSTOM
+    dw = d2.number_input("Domain width (m)", 100, 15000, step=int(cell) * 4, key=f"{kp}_dw", disabled=not custom)
+    dh = d3.number_input("Domain height (m)", 100, 15000, step=int(cell) * 4, key=f"{kp}_dh", disabled=not custom)
+    dmax = d4.selectbox("Maximum extent (km)", [int(v // 1000) for v in MAX_EXTENT_OPTIONS_M], key=f"{kp}_dmax",
+                        help="Upper limit for the domain, including automatic expansion while the fire spreads "
+                             "(protects memory and keeps the browser responsive).")
+    setup.update(domain_preset=pre, domain_w_m=float(dw), domain_h_m=float(dh), max_extent_m=float(dmax) * 1000.0)
+    loc = setup["location"]
+    f = FocusArea("check", float(loc["lat"]), float(loc["lon"]), _snap(w, cell), _snap(h, cell), cell)
+    err, warn = validate_domain(f, domain_size_from_setup(setup), limits_from_setup(setup), dur,
+                                domain_box_from_setup(setup))
+    if pre == DOMAIN_MAP and not err:
+        d = domain_from_setup(setup)
+        st.caption(f"Domain drawn on the map: {d.width_m / 1000:.2f} × {d.height_m / 1000:.2f} km, grid "
+                   f"{d.n_cols} × {d.n_rows} cells, centre {0.5 * (d.bounds['north'] + d.bounds['south']):.5f}° N, "
+                   f"{0.5 * (d.bounds['east'] + d.bounds['west']):.5f}° E.")
+    if err:
+        st.error(err)
+    elif warn:
+        st.warning(warn)
+    return err
 
 
 def render_setup_summary(setup: dict, twin):
     f = focus_from_setup(setup)
     dur = setup["duration_min"]
-    dom = domain_for(f, dur)
-    step = step_minutes_for(f.cell_m)
+    dom = domain_from_setup(setup)
+    step = frame_minutes_for(dur)
     cards = [("Width", f"{f.n_cols * f.cell_m:.0f} m"), ("Height", f"{f.n_rows * f.cell_m:.0f} m"),
              ("Area", f"{f.area_km2:.2f} km²"), ("Cell", f"{f.cell_m:.0f} m"), ("Grid", f"{f.n_cols} × {f.n_rows}"),
-             ("Duration", duration_label(dur)), ("CA step", f"{step * 60:.0f} s" if step < 1 else f"{step:g} min"),
-             ("Simulation domain", f"{dom.width_m / 1000:.2f} × {dom.height_m / 1000:.2f} km")]
+             ("Simulated time", duration_label(dur)),
+             ("Frame", f"{step * 60:.0f} s" if step < 1 else f"{step:g} min"),
+             ("Initial simulation domain", f"{dom.width_m / 1000:.2f} × {dom.height_m / 1000:.2f} km"),
+             ("Domain grid", f"{dom.n_cols} × {dom.n_rows}")]
     st.markdown('<div class="kpi-row">' + "".join(
         f'<div class="kpi"><div class="lbl">{a}</div><div class="val" style="font-size:18px">{b}</div></div>'
         for a, b in cards) + "</div>", unsafe_allow_html=True)
-    if dur < step:
-        st.info(f"{duration_label(dur)} is shorter than one CA step ({step:g} min at {f.cell_m:.0f} m cells). At the "
-                f"model's spread rate (100 m per 15 min) the fire moves about {dur * 100 / 15:.0f} m in that time, "
-                f"less than one cell, so only the ignition will be burning. Use smaller cells or a longer duration "
-                f"to see propagation.")
+    st.caption("Focus area (solid blue box) is the area you analyse; the SIMULATION DOMAIN (dashed amber box) is "
+               "the grid the fire model runs on - ignitions may be placed anywhere inside it. The domain grows "
+               "automatically before the fire reaches its edge, up to the maximum extent. Simulated time is computed "
+               "in full and then played back (1× ≈ 1 simulated minute per second).")
     _location_notes(setup, twin)
 
 
@@ -365,21 +495,52 @@ def render_setup_map(setup: dict, kp: str, twin, wind_speed_ms: float, wind_from
         missing_key_card()
         return
     f = focus_from_setup(setup)
-    if validate_setup(f.width_m, f.height_m, f.cell_m, setup["duration_min"]):
+    if validate_setup(f.width_m, f.height_m, f.cell_m, setup["duration_min"]) or \
+            validate_domain(f, domain_size_from_setup(setup), limits_from_setup(setup), setup["duration_min"],
+                            domain_box_from_setup(setup))[0]:
         return
+    from src.dashboard.geo_fire_map import land_cover_layer, study_region_payload
+    dom0 = domain_from_setup(setup)
+    lc_layer = None
+    if land is not None and hasattr(land, "context_classes"):
+        ctx_cls = land.context_classes(dom0)
+        if ctx_cls is not None:
+            lc_layer = land_cover_layer(ctx_cls, "CONTEXT: OpenStreetMap mapped features (not a fire barrier)",
+                                        "context")
+    elif land is not None and getattr(land, "classes", None) is not None and \
+            land.classes.shape == (dom0.n_rows, dom0.n_cols):
+        lc_layer = land_cover_layer(land.classes, land.label, getattr(land, "status", ""))
     payload = setup_payload(f, setup["duration_min"], wind_speed_ms, wind_from_deg, setup["n_ignition"],
                             setup["placement"], setup["ignition_points"], setup["layers"], key,
                             google_maps_map_id(), height=height, hotspots=hotspots or [],
                             hotspot_kind=hotspot_kind, hotspot_summary=hotspot_summary,
-                            **_map_ignition_args(ignition, setup, land))
+                            **_map_ignition_args(ignition, setup, land), land_layer=lc_layer,
+                            study_region=study_region_payload(study_region()), domain=dom0,
+                            domain_size=domain_size_from_setup(setup),
+                            domain_independent=domain_box_from_setup(setup) is not None)
     ev = new_event(render_fire_map(payload, key=f"{kp}_map"), f"{kp}_map")
     msgs: list = []
-    if ev and apply_map_event(ev, setup, twin, whatif=whatif, land=land, messages=msgs):
+    reasons: list = []
+    notes: list = []
+    if ev and apply_map_event(ev, setup, twin, whatif=whatif, land=land, messages=msgs, reasons=reasons,
+                              notes=notes):
         st.session_state[f"_{kp}_sync"] = True
-        st.session_state[f"_{kp}_ign_msgs"] = sorted(set(msgs))
+        st.session_state[f"_{kp}_ign_msgs"] = sorted(set(reasons + [m for m in msgs if m != HYP_NON_FUEL]))
+        st.session_state[f"_{kp}_ign_notes"] = list(dict.fromkeys(notes))
         st.rerun()
+    if whatif and land is not None and hasattr(land, "classify") and setup.get("ignition_source") == "hypothetical":
+        st.caption(land.label + ". It only checks where a hypothetical ignition may be placed; fire spread is "
+                   "not restricted by land cover.")
+    _render_ignition_feedback(kp)
+
+
+def _render_ignition_feedback(kp: str):
+    """Outcome of the last ignition-point check (shown once after the click)."""
     for m in st.session_state.pop(f"_{kp}_ign_msgs", []) or []:
         st.warning(m)
+    for n in st.session_state.pop(f"_{kp}_ign_notes", []) or []:
+        (st.warning if "ON MAPPED" in n else st.success if n.startswith("HYPOTHETICAL IGNITION ACCEPTED")
+         else st.info)(n)
 
 
 def _map_ignition_args(ign: Optional[dict], setup: Optional[dict] = None, land=None) -> dict:
@@ -393,12 +554,25 @@ def _map_ignition_args(ign: Optional[dict], setup: Optional[dict] = None, land=N
         return {"ignition_kind": "observed", "observed_points": ign["points"],
                 "ignition_label": f"OBSERVED · {ign.get('n_cells', len(ign['points']))} NASA FIRMS cell(s)"}
     if ign["source"] == "HYPOTHETICAL_USER" or ign.get("awaiting_points"):
-        nf = (np.flatnonzero(land.non_fuel.ravel()).tolist()
-              if land is not None and getattr(land, "available", False) else [])
+        # A LandCover GRID (supplied by a caller) lets the map reject clicks on its non-burnable cells at once.
+        # The production point check (IgnitionSiteClassifier) has no grid: the clicked point is checked in
+        # Python and the outcome is shown after the click.
+        if land is not None and getattr(land, "classes", None) is not None and getattr(land, "available", False):
+            from src.simulation.ignition_site import LABELS
+            flat = land.classes.ravel()
+            nb = (flat != FUEL) & (flat != UNKNOWN)
+            nf = np.flatnonzero(nb).tolist()
+            nfc = {LABELS[k]: np.flatnonzero(flat == k).tolist()
+                   for k in LABELS if k not in (FUEL, UNKNOWN) and (flat == k).any()}
+        else:
+            nf, nfc = [], {}
         lbl = (f"HYPOTHETICAL · {ign.get('n_selected', 0)} / {ign.get('n_requested')} selected" if ign.get("manual")
                else f"HYPOTHETICAL · {ign.get('n_requested')} cell(s) · {ign.get('placement') or '-'}")
-        return {"ignition_kind": "hypothetical", "ignition_label": lbl, "max_picks": ign.get("n_requested"),
-                "nonfuel_cells": nf, "picks_only_for_map_points": True}
+        out = {"ignition_kind": "hypothetical", "ignition_label": lbl, "max_picks": ign.get("n_requested"),
+               "nonfuel_cells": nf, "picks_only_for_map_points": True}
+        if nfc:
+            out["nonfuel_classes"] = nfc
+        return out
     return {"ignition_kind": "none", "ignition_label": "NONE (no ignition source)"}
 
 
@@ -535,7 +709,8 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
            setup["placement"], setup["n_ignition"], json.dumps(setup["ignition_points"]),
            round(float(wind_speed_ms), 2), round(float(wind_from_deg), 1), cond["zone_id"],
            round(cond["ffmc"], 3) if np.isfinite(cond["ffmc"]) else None, id(snap),
-           lmode, setup.get("ignition_source") if lmode else None)
+           lmode, setup.get("ignition_source") if lmode else None, setup.get("domain_preset"),
+           setup.get("domain_w_m"), setup.get("domain_h_m"), setup.get("max_extent_m"))
     res_key, sig_key, seed_key = f"{kp}_geo_result", f"{kp}_geo_sig", f"{kp}_geo_seed"
     status_key = f"{kp}_geo_status"
     if st.session_state.get(sig_key) != sig:
@@ -564,23 +739,7 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
         log_action("simulation", f"{lm.MODE_NAMES[lmode]} at {f.name}: {st.session_state[status_key]['title']} "
                    "(no ignition, nothing simulated)", twin.region.name)
     elif run or redraw:
-        with st.spinner("Simulating fire spread on the simulation domain..."):
-            dom = domain_for(f, setup["duration_min"])
-            elev, terrain_src = domain_elevation(dom, allow_fetch=True)
-            land = domain_land_cover(dom, allow_fetch=True)      # water / roads / buildings -> non-fuel
-            if plan is not None and (plan["ign"]["source"] == "OBSERVED_FIRMS" or plan["ign"].get("manual")):
-                # observed FIRMS cells, or exactly the user's hypothetical map points: no other cell ignites
-                result = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=0,
-                                          placement="Map points", seed=seed, elevation=elev,
-                                          terrain_source=terrain_src, wind_schedule_15min=wind_schedule_15min,
-                                          duration_minutes=setup["duration_min"],
-                                          ignition_points=plan["ign"]["points"], land_cover=land, strict_points=True)
-            else:
-                result = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=setup["n_ignition"],
-                                          placement=setup["placement"], seed=seed, elevation=elev,
-                                          terrain_source=terrain_src, wind_schedule_15min=wind_schedule_15min,
-                                          duration_minutes=setup["duration_min"],
-                                          ignition_points=setup["ignition_points"], land_cover=land)
+        result = _run_simulation(f, cond, setup, plan, seed, wind_speed_ms, wind_from_deg, wind_schedule_15min)
         st.session_state[res_key] = result
         st.session_state[status_key] = (lm.result_status(lmode, live["firms"]["status"], plan["cls"], sev,
                                                          plan["ign"], ran=True) if plan is not None else None)
@@ -622,19 +781,25 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
             hot, hot_kind, hot_summary = map_hotspots(live_data[2], live_data[3])
     key = google_maps_key()
     if key:
-        payload = sim_payload(f, setup["duration_min"], result, wind_speed_ms, wind_from_deg, hot,
+        payload = _cached_sim_payload(kp, f, setup["duration_min"], result, wind_speed_ms, wind_from_deg, hot,
                               hot_kind, setup["n_ignition"], setup["placement"],
                               setup["ignition_points"], setup["layers"], autoplay=result is not None,
                               api_key=key, map_id=google_maps_map_id(), hotspot_summary=hot_summary,
-                              **_map_ignition_args(plan["ign"] if plan is not None else None, setup,
-                                                   plan["land"] if plan is not None else None))
+                              study_region=_region_payload(), domain=domain_from_setup(setup),
+                              hud=_hud_info(lmode, cond, twin, setup, plan, result, live),
+                              **_remap_click_rules(_map_ignition_args(plan["ign"] if plan is not None else None,
+                                                                      setup, plan["land"] if plan is not None
+                                                                      else None),
+                                                   plan["domain"] if plan is not None else None,
+                                                   result.domain if result is not None else None))
         ev = new_event(render_fire_map(payload, key=f"{kp}_simmap"), f"{kp}_simmap")
         msgs: list = []
+        reasons: list = []
         if ev and ev.get("kind") == "ignite" and apply_map_event(
                 ev, setup, twin, whatif=lmode == lm.WHATIF, land=plan["land"] if plan is not None else None,
-                messages=msgs):
+                messages=msgs, reasons=reasons):
             st.session_state[f"_{kp}_set_sync"] = True
-            st.session_state[f"_{kp}_ign_msgs"] = sorted(set(msgs))
+            st.session_state[f"_{kp}_ign_msgs"] = sorted(set(reasons + [m for m in msgs if m != HYP_NON_FUEL]))
             st.rerun()
         for m in st.session_state.pop(f"_{kp}_ign_msgs", []) or []:
             st.warning(m)
@@ -644,6 +809,9 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
     st.caption(f"{wind_label}: {wind_speed_ms:.1f} m/s from the {_compass_direction_name(wind_from_deg)} "
                f"({wind_from_deg:.0f}°), pushing fire and smoke towards the "
                f"{_compass_direction_name(wind_from_deg + 180)}.")
+    if result is not None:
+        from src.dashboard.ui.alerts_ui import render_result_actions
+        render_result_actions(_report_snapshot(result, cond, setup, lmode, scenario, live, twin, plan), kp)
     if lmode:
         cls = plan["cls"]
         render_live_conditions(f.lat, f.lon, loc.get("name", ""), kp, demo, data=live_data, refresh=False,
@@ -677,9 +845,249 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
         _render_provenance(cond, None, f, setup, scenario, wind_label, live=live, plan=plan)
         return
     _render_land_cover_note(result)
+    _render_domain_and_region(result)
     _render_analytics(result, setup)
     _render_exports(result, kp)
     _render_provenance(cond, result, f, setup, scenario, wind_label, live=live, plan=plan)
+    _render_diagnostics(result)
+
+
+def _risk_text(cond: dict, twin) -> Optional[str]:
+    """ML-predicted risk of the zone (category + score) - PREDICTED, from the twin's model."""
+    r = cond.get("risk_score")
+    if r is None or not np.isfinite(r):
+        return None
+    try:
+        cat = twin.alert_engine.classify(float(r))
+    except Exception:
+        cat = "-"
+    return f"{cat} · {float(r) * 100:.0f}%"
+
+
+def _hud_info(lmode, cond: dict, twin, setup: dict, plan, result, live) -> dict:
+    from src.dashboard import live_modes as lm
+    mode = {lm.LIVE: "LIVE", lm.WHATIF: "WHAT-IF"}.get(lmode, "SCENARIO")
+    pts = (plan["ign"]["points"] if plan is not None else setup.get("ignition_points")) or []
+    if pts:
+        ign = f"{len(pts)} pt · {pts[0][0]:.4f}°, {pts[0][1]:.4f}°"
+    else:
+        ign = f"{setup.get('n_ignition')} cell(s) · {setup.get('placement')}"
+    stale = None
+    if live and (live.get("weather") or {}).get("status") not in (None, "live"):
+        stale = f"Weather: {(live.get('weather') or {}).get('status')}"
+    if live and (live.get("firms") or {}).get("status") not in (None, "live"):
+        stale = ((stale + " · ") if stale else "") + f"FIRMS: {(live.get('firms') or {}).get('status')}"
+    return {"modeLabel": mode, "riskText": _risk_text(cond, twin), "ignitionText": ign,
+            "reportId": (result.params.get("report_id") if result is not None else None),
+            "staleNote": (stale + " (not live)") if stale else None}
+
+
+def _cached_sim_payload(kp: str, *args, **kwargs) -> dict:
+    """sim_payload is rebuilt only when its inputs change (a rerun from a widget elsewhere on the page,
+    or a map event, reuses the serialised payload instead of re-deriving thousands of cells)."""
+    result = args[2] if len(args) > 2 else kwargs.get("result")
+    key = json.dumps([id(result), repr(getattr(result, "timings", None)), repr(args[:2]), repr(args[3:]), repr(sorted((k, repr(v)) for k, v in kwargs.items()))],
+                     default=str)
+    box = st.session_state.get(f"_{kp}_payload_cache")
+    if box and box[0] == key:
+        return box[1]
+    p = sim_payload(*args, **kwargs)
+    st.session_state[f"_{kp}_payload_cache"] = (key, p)
+    return p
+
+
+def _remap_cells(cells, src, dst) -> list:
+    """Flat cell indices of domain `src` -> the same cells in domain `dst`
+    (same lattice; dst may have grown on any side)."""
+    dr, dc = dst.m_north - src.m_north, dst.m_west - src.m_west
+    out = []
+    for i in cells:
+        r, c = divmod(int(i), src.n_cols)
+        r, c = r + dr, c + dc
+        if 0 <= r < dst.n_rows and 0 <= c < dst.n_cols:
+            out.append(r * dst.n_cols + c)
+    return out
+
+
+def _remap_click_rules(args: dict, src, dst) -> dict:
+    """The map's click rules (non-fuel cells) were computed on the set-up
+    coverage; after a run the map shows the run's final domain."""
+    if src is None or dst is None or (src.margin_tuple == dst.margin_tuple and src.n_cols == dst.n_cols):
+        return args
+    args = dict(args)
+    if args.get("nonfuel_cells"):
+        args["nonfuel_cells"] = _remap_cells(args["nonfuel_cells"], src, dst)
+    if args.get("nonfuel_classes"):
+        args["nonfuel_classes"] = {k: _remap_cells(v, src, dst) for k, v in args["nonfuel_classes"].items()}
+    return args
+
+
+def _region_payload():
+    from src.dashboard.geo_fire_map import study_region_payload
+    return study_region_payload(study_region())
+
+
+def _run_simulation(f: FocusArea, cond: dict, setup: dict, plan: Optional[dict], seed: int,
+                    wind_speed_ms: float, wind_from_deg: float, wind_schedule_15min):
+    """The production run (WHAT-IF and LIVE): the existing CA with its own
+    fire-behaviour inputs (zone FFMC dryness, BUI build-up, fuel, wind, DEM
+    slope), the ignition-aware initial domain (audit BUG #1) and adaptive domain
+    expansion. NO land-cover acquisition, fusion or fuel mask: the ignition-point
+    check already happened when the point was placed, and fire propagation is
+    not restricted by land cover."""
+    from src.utils.timing import Timings
+    strict = plan is not None and (plan["ign"]["source"] == "OBSERVED_FIRMS" or plan["ign"].get("manual"))
+    pts = plan["ign"]["points"] if strict else (setup["ignition_points"] if setup["placement"] == "Map points"
+                                                 else [])
+    tm = Timings()
+    dom0 = domain_from_setup(setup, pts)
+    with st.status("Running the simulation…", expanded=False) as _status:
+        status = _status if _status is not None else type("NoStatus", (), {"update": lambda *a, **k: None})()
+        status.update(label="Terrain: cached DEM lattice (network only for new areas, ≤ 12 s)…")
+        with tm.stage("terrain"):
+            elev, terrain_src = domain_elevation(dom0, allow_fetch=True)   # cached DEM lattice
+
+        def elevation_provider(spec):
+            # strips added while the fire spreads: cached DEM only (never a network wait mid-run)
+            return domain_elevation(spec, allow_fetch=False)
+        common = dict(seed=seed, elevation=elev, terrain_source=terrain_src, wind_schedule_15min=wind_schedule_15min,
+                      duration_minutes=setup["duration_min"], domain=dom0, elevation_provider=elevation_provider,
+                      study_region=study_region(), timings=tm, limits=limits_from_setup(setup))
+        status.update(label=f"Fire spread: {duration_label(setup['duration_min'])} of simulated time…")
+        if strict:
+            # observed FIRMS cells, or exactly the user's hypothetical map points: no other cell ignites
+            res = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=0, placement="Map points",
+                                   ignition_points=plan["ign"]["points"], strict_points=True, **common)
+        else:
+            res = run_local_spread(f, cond, wind_speed_ms, wind_from_deg, n_ignition=setup["n_ignition"],
+                                   placement=setup["placement"], ignition_points=setup["ignition_points"], **common)
+        t = tm.as_dict()
+        status.update(label=f"Simulation complete in {t.get('total', 0):.1f} s (terrain {t.get('terrain', 0):.1f} s, "
+                            f"fire model {t.get('ca_simulation', 0):.2f} s)", state="complete")
+    res.params["ignition_checks"] = list(setup.get("ignition_checks") or [])
+    res.params["report_id"] = new_report_id()
+    res.timings = tm.as_dict()
+    return res
+
+
+def _report_snapshot(result, cond, setup, lmode, scenario, live, twin, plan) -> Optional[dict]:
+    """The reproducible snapshot of this completed run (built once per report ID, stored in the database)."""
+    from src.dashboard import live_modes as lm
+    rid = result.params.get("report_id")
+    if not rid:
+        return None
+    box = st.session_state.setdefault("_report_snapshots", {})
+    if rid not in box:
+        from src.reports.simulation_report import build_snapshot
+        mode = {lm.LIVE: "LIVE", lm.WHATIF: "WHAT-IF"}.get(lmode, "SCENARIO")
+        snap = build_snapshot(result, cond, setup, mode, scenario if mode != "LIVE" else None, live, twin, plan,
+                              actor=st.session_state.get("auth_user", ""))
+        box[rid] = snap
+        try:
+            from src.notifications.alert_store import save_report_snapshot
+            save_report_snapshot(rid, snap, actor=st.session_state.get("auth_user", ""))
+        except Exception as exc:                       # storage failure never hides the report
+            logging.getLogger(__name__).warning("report snapshot not stored: %s", exc)
+    return box[rid]
+
+
+def new_report_id() -> str:
+    """Unique ID of a completed simulation (used by the report and any alert about it)."""
+    import secrets
+    return "FFDT-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2).upper()
+
+
+def _render_domain_and_region(result):
+    """Adaptive domain, extent limit, Bandipur boundary crossing - never hidden."""
+    if result.extent_limit:
+        lim = result.extent_limit
+        st.error(f"**{EXTENT_LIMIT_TITLE}** at T+{lim.get('minutes', 0):g} min ({lim.get('side', '')} edge): "
+                 f"{lim['reason']}. The fire did not stop naturally there - it was still able to spread.")
+    if result.expansions:
+        e = result.expansions[-1]
+        st.info(f"Simulation domain expanded {len(result.expansions)}× while the fire spread "
+                f"(initial {result.initial_domain.width_m:.0f} × {result.initial_domain.height_m:.0f} m → "
+                f"{result.domain.width_m:.0f} × {result.domain.height_m:.0f} m, last at T+{e['minutes']:g} min). "
+                "Land cover and terrain were loaded for every new strip; the fire state continued without restart.")
+    reg = result.study_region
+    if reg:
+        tag = "" if reg["status"] == "OFFICIAL" else f" ({reg['status']} boundary)"
+        fin = result.final
+        if reg.get("ignition_outside_region"):
+            st.warning(f"The ignition lies outside the {reg['name']} boundary{tag}: this run is in the "
+                       "REGIONAL EXTENSION, not in the primary study region.")
+        elif reg.get("crossed"):
+            st.warning(f"Fire reached and crossed the {reg['name']} boundary{tag} at T+{reg['crossing_minutes']:g} min "
+                       f"({reg.get('crossing_lat')}, {reg.get('crossing_lon')}). The simulation continued into the "
+                       "REGIONAL EXTENSION (outside the reserve).")
+        st.caption(f"{reg['name']}{tag}: burned {fin.get('burned_ha_bandipur', 0):.2f} ha inside · "
+                   f"REGIONAL EXTENSION {fin.get('burned_ha_regional_extension', 0):.2f} ha (kept separate).")
+
+
+def explain_cell(result, lat: float, lon: float) -> Optional[dict]:
+    """Why can (or can't) this cell burn? Every value is read from the run's own
+    inputs (fuel grid, conditions, terrain, wind). Fire propagation is not
+    restricted by land cover; a caller-supplied land-cover layer is shown if
+    the run had one."""
+    rc = result.domain.cell_of(float(lat), float(lon))
+    if rc is None:
+        return None
+    r, c = rc
+    lc = result.land_cover
+    cls = int(lc[rc]) if lc is not None else None
+    e = result.elevation
+    nb = [float(e[r + dr, c + dc]) for dr in (-1, 0, 1) for dc in (-1, 0, 1)
+          if (dr or dc) and 0 <= r + dr < e.shape[0] and 0 <= c + dc < e.shape[1]]
+    slope = max(abs(float(e[rc]) - v) for v in nb) / result.focus.cell_m * 100 if nb else 0.0
+    p = result.params
+    k = max(0, int(result.ignition_step[rc]) - 1) if result.ignition_step[rc] > 0 else 0
+    w = result.wind_schedule[min(k, len(result.wind_schedule) - 1)]
+    return {"cell (row, col)": f"{r}, {c}",
+            "land cover": (CLASS_NAMES.get(cls, "-") if cls is not None
+                           else "not used for fire spread (ignition-point check only)"),
+            "fuel load (relative 0-1)": round(float(result.fuel_load[rc]), 3) if result.fuel_load is not None else "-",
+            "fuel-load source": p.get("fuel_load_source", "-"),
+            "FFMC dryness (zone)": round(float(p.get("dryness", float("nan"))) * 101, 1),
+            "BUI build-up factor (zone)": round(float(p.get("buildup", float("nan"))), 2),
+            "wind": f"{w[0]:.1f} m/s from {_compass_direction_name(w[1])} ({w[1]:.0f}°)",
+            "max slope to a neighbour": f"{slope:.1f} %",
+            "burnability": "NO" if bool(result.non_fuel[rc]) else "YES",
+            "simulated ignition": ((f"T+{round(float(result.ignition_time[rc]), 1):g} min"
+                                    if getattr(result, "ignition_time", None) is not None
+                                    else f"T+{result.ignition_step[rc] * result.step_minutes:g} min")
+                                   if result.ignition_step[rc] >= 0 else "did not burn"),
+            **({"fireline intensity": f"{result.fireline_kw[rc]:,.0f} kW/m (SIMULATED)"}
+               if getattr(result, "fireline_kw", None) is not None and result.ignition_step[rc] >= 0 else {})}
+
+
+def _render_diagnostics(result):
+    """Developer / debug information: timings, expansions, land-cover sources."""
+    with st.expander("Why can this cell burn? (cell inspector)"):
+        f = result.focus
+        c1, c2 = st.columns(2)
+        la = c1.number_input("Latitude", value=float(f.lat), format="%.6f", key=f"insp_lat_{id(result)}")
+        lo = c2.number_input("Longitude", value=float(f.lon), format="%.6f", key=f"insp_lon_{id(result)}")
+        info = explain_cell(result, la, lo)
+        if info is None:
+            st.caption("That point is outside the simulation domain.")
+        else:
+            st.dataframe(pd.DataFrame([(k, str(v)) for k, v in info.items()], columns=["", "value"]),
+                         hide_index=True, use_container_width=True)
+    with st.expander("Developer diagnostics: timings and domain expansion"):
+        t = result.timings or {}
+        st.dataframe(pd.DataFrame([{"stage": k, "seconds": v} for k, v in t.items()]), hide_index=True,
+                     use_container_width=True)
+        st.json({"initial_domain": result.params.get("initial_domain"), "final_domain": result.params.get("final_domain"),
+                 "expansions": result.expansions, "extent_limit": result.extent_limit,
+                 "fuel_load_source": result.params.get("fuel_load_source"),
+                 "fuel_variability": result.params.get("fuel_variability"),
+                 "model": {k: result.params.get(k) for k in (
+                     "model", "fuel_model", "ros_head_m_per_min", "ros_flank_m_per_min", "ros_back_m_per_min",
+                     "length_to_breadth", "isi", "wind_kmh", "frame_minutes", "substep_minutes", "n_substeps",
+                     "extinguished_at_min", "neighbourhood", "flame_min", "residence_max_min", "threshold_jitter",
+                     "wind_model", "diagonal_correction", "max_spread_m_per_min")},
+                 "ignition_checks": result.params.get("ignition_checks"),
+                 "study_region": result.study_region}, expanded=False)
 
 
 def land_cover_summary(result) -> Optional[str]:
@@ -687,7 +1095,7 @@ def land_cover_summary(result) -> Optional[str]:
     lc = getattr(result, "land_cover", None)
     if lc is None:
         return None
-    if not result.land_cover_label.startswith("OpenStreetMap"):
+    if not (result.land_cover_label.startswith("OpenStreetMap") or getattr(result, "land_status", "")):
         return result.land_cover_label
     parts = [f"{int((lc == k).sum())} {name}" for k, name in CLASS_NAMES.items() if k != FUEL and (lc == k).any()]
     return (f"{result.land_cover_label}: " + (", ".join(parts) + " cells excluded from fire spread"
@@ -695,19 +1103,16 @@ def land_cover_summary(result) -> Optional[str]:
 
 
 def _render_land_cover_note(result):
-    p = result.params
-    line = land_cover_summary(result)
-    if line is None:
-        line = result.params.get("land_cover", "No land-cover layer")
-    skipped = int(p.get("ignition_cells_on_non_fuel", 0))
-    msg = line + "."
-    if skipped:
-        msg += (f" {skipped} of {p.get('ignition_cells_requested', 0)} requested ignition cell(s) fell on water, "
-                "road, built-up or bare ground and were not ignited.")
-    if "unavailable" in line.lower():
-        st.warning(msg)
-    else:
-        st.caption(msg + " Turn on the map's Land cover layer to see these cells.")
+    """One line on how land cover was (not) used by this run."""
+    if result.land_cover is not None:                     # a caller-supplied mask (API / tests)
+        st.caption((land_cover_summary(result) or result.land_cover_label) + ".")
+        return
+    checks = result.params.get("ignition_checks") or []
+    txt = ("Fire spread is computed by the cellular automata from wind, FFMC (temperature / humidity), BUI, fuel and "
+           "slope; it is not restricted by land cover.")
+    if checks:
+        txt += " Ignition-point check: " + ", ".join(f"{c['label']}" for c in checks) + "."
+    st.caption(txt)
 
 
 def _render_analytics(result, setup: dict):
@@ -719,6 +1124,9 @@ def _render_analytics(result, setup: dict):
     d0 = m[0]["front_distance_m"]                          # radius of the ignition cluster itself
     mean_ros = (fin["front_distance_m"] - d0) / fin["minutes"] if fin["minutes"] else 0.0
     max_int = max(x["max_intensity"] for x in m)
+    max_kw = max((x.get("max_intensity_kw_m") or 0.0) for x in m)
+    p = result.params
+    ext = p.get("extinguished_at_min")
     fcells = result.focus.n_rows * result.focus.n_cols
     pct_focus = 100.0 * fin["burned_in_focus"] / fcells if fcells else 0.0
     dur = setup["duration_min"]
@@ -726,18 +1134,30 @@ def _render_analytics(result, setup: dict):
              ("Fire perimeter", f"{fin['perimeter_m']:.0f} m", ""),
              ("Max spread distance", f"{fin['front_distance_m']:.0f} m", ""),
              ("Mean rate of spread", f"{mean_ros:.1f} m/min", "warn"), ("Peak rate of spread", f"{max_ros:.1f} m/min", "warn"),
-             ("Max fire intensity", f"{max_int * 100:.0f}%", "warn"),
-             ("Fire state", f"Out at T+{fin['minutes']:.0f} min" if ended else f"Active at T+{min(dur, fin['minutes']):g} min",
-              "ok" if ended else "crit"),
+             ("Max fire intensity", (f"{max_kw:,.0f} kW/m" if max_kw else f"{max_int * 100:.0f}%"), "warn"),
+             ("Fire state", (f"Out at T+{ext:g} min" if ext is not None else f"Out by T+{fin['minutes']:.0f} min")
+              if ended else f"Active at T+{min(dur, fin['minutes']):g} min", "ok" if ended else "crit"),
+             ("Simulated time", f"{duration_label(fin['minutes'])} of {duration_label(dur)}"
+              + (f" · computed in {result.timings.get('total', 0):.1f} s" if result.timings else ""), "ok"),
              ("Beyond focus area", f"From T+{beyond_t:.0f} min" if beyond_t is not None else "No",
               "warn" if beyond_t is not None else "ok")]
     st.markdown('<div class="kpi-row">' + "".join(
         f'<div class="kpi"><div class="lbl">{a}</div><div class="val {c}" style="font-size:19px">{b}</div></div>'
         for a, b, c in cards) + "</div>", unsafe_allow_html=True)
+    if p.get("model") == "ros-ca":
+        st.caption(f"Fire model: rate-of-spread cellular automaton (Canadian FBP System equations; fuel "
+                   f"{p.get('fuel_model')}). Head-fire ROS {p.get('ros_head_m_per_min', 0):.1f} m/min, flank "
+                   f"{p.get('ros_flank_m_per_min', 0):.1f}, back {p.get('ros_back_m_per_min', 0):.2f} m/min, fire-ellipse "
+                   f"length:breadth {p.get('length_to_breadth', 1):.1f} (ISI {p.get('isi', 0):.1f}, wind "
+                   f"{p.get('wind_kmh', 0):.0f} km/h). SIMULATED and uncalibrated for Bandipur: a physically consistent "
+                   f"what-if, not an operational forecast. Frames every {p.get('frame_minutes', 0):g} min, "
+                   f"{p.get('n_substeps', 0)} internal steps of {60 * (p.get('substep_minutes') or 0):.0f} s. "
+                   "Playback speed (0.5×–5×) only changes how fast these computed frames are shown.")
     if fin.get("centroid_lat") is not None:
         st.caption(f"Final fire centroid {fin['centroid_lat']:.5f}°N, {fin['centroid_lon']:.5f}°E · "
                    f"simulation domain {result.domain.width_m:.0f} × {result.domain.height_m:.0f} m "
-                   f"(focus area + {result.domain.margin} cells on every side, so the fire is never stopped by a box)")
+                   f"(margins N/S/W/E {', '.join(str(m) for m in result.domain.margin_tuple)} cells; it grows "
+                   "while the fire spreads, so the fire is never stopped by a box)")
 
     t = [x["minutes"] for x in m]
     fig = go.Figure()
@@ -769,7 +1189,9 @@ def _render_exports(result, kp: str):
     for r, c in zip(*np.where(result.ignition_step >= 0)):
         la, lo = float(lat_c[r, c]), float(lon_c[r, c])
         feats.append({"type": "Feature",
-                      "properties": {"ignition_min": round(float(result.ignition_step[r, c]) * result.step_minutes, 2),
+                      "properties": {"ignition_min": round(float(result.ignition_time[r, c]), 2)
+                                     if getattr(result, "ignition_time", None) is not None
+                                     else round(float(result.ignition_step[r, c]) * result.step_minutes, 2),
                                      "intensity": round(float(result.intensity[r, c]), 3), "simulated": True},
                       "geometry": {"type": "Polygon", "coordinates": [[[lo - hw, la - hl], [lo + hw, la - hl],
                                                                        [lo + hw, la + hl], [lo - hw, la + hl],
@@ -780,6 +1202,36 @@ def _render_exports(result, kp: str):
                        "text/csv", key=f"{kp}_dl_csv", use_container_width=True)
     e2.download_button("Export burned area (GeoJSON)", json.dumps(gj).encode(), "simulated_burned_area.geojson",
                        "application/geo+json", key=f"{kp}_dl_geo", use_container_width=True)
+
+
+def _fuel_row(result, cond: dict):
+    """Provenance of the CA fuel load."""
+    if result is None:
+        return ("Fuel load", f"Zone NDVI estimate {cond['ndvi']:.2f} (zone {cond['zone_id']}) with small simulated "
+                             "cell-to-cell variability", "SYNTHETIC")
+    src = result.params.get("fuel_load_source", "")
+    if src.startswith("land cover"):
+        return ("Fuel load", f"Per-cell, {src}", "DERIVED")
+    var = result.params.get("fuel_variability") or 0
+    return ("Fuel load", f"Zone NDVI estimate {cond['ndvi']:.2f} (zone {cond['zone_id']})"
+                         + (f" with ±{var * 100:.0f}% simulated cell-to-cell variability (natural patchiness; not "
+                            "observed)" if var else ", uniform"), "SYNTHETIC")
+
+
+def _mask_type(result) -> str:
+    if result is None or result.land_cover is None:
+        return "NOT USED FOR SPREAD"
+    return "CALLER-SUPPLIED MASK"
+
+
+def _region_row(result) -> str:
+    reg = study_region()
+    if reg is None:
+        return "No study-region boundary file"
+    txt = f"{reg.name}: {reg.status} boundary ({reg.source}); polygon area {reg.area_km2:.0f} km²"
+    if reg.stated_area_km2:
+        txt += f" (stated reserve area {reg.stated_area_km2:,.0f} km²)"
+    return txt
 
 
 def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: Optional[dict], wind_label: str,
@@ -808,11 +1260,13 @@ def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: 
             lmode, "SCENARIO INPUT" if scenario else "LIVE / DEMO")),
         ("FFMC / BUI / FWI", f"{cond['ffmc']:.1f} / {cond['bui']:.1f} / {cond['fwi']:.1f} (zone {cond['zone_id']})", "DERIVED"),
         ("Model risk", f"{cond['risk_score']:.0%}" if np.isfinite(cond["risk_score"]) else "-", "DERIVED (XGBoost)"),
-        ("Fuel load", f"NDVI estimate {cond['ndvi']:.2f} (zone {cond['zone_id']}) on fuel cells", "DERIVED"),
-        ("Fuel / non-fuel mask", (land_cover_summary(result) or p.get("land_cover", "No land-cover layer"))
-         if result is not None else "OpenStreetMap water, roads, buildings and bare ground, fetched when the "
-                                    "simulation runs", "REAL (OpenStreetMap)"
-         if result is not None and result.land_cover_label.startswith("OpenStreetMap") else "-"),
+        _fuel_row(result, cond),
+        ("Land cover", "Not used for fire propagation. A lightweight OpenStreetMap check of the exact clicked point "
+                       "rejects hypothetical ignitions on mapped roads, buildings / built-up areas, water and bare "
+                       "ground; unmapped points are LOCATION UNVERIFIED.", _mask_type(result)),
+        ("Study region", _region_row(result), "REAL BOUNDARY" if (result is not None and result.study_region and
+                                                                   result.study_region["status"] == "OFFICIAL")
+         else "APPROXIMATE BOUNDARY"),
         ("Grid", f"{f.cell_m:.0f} m cells, CA step {step_minutes_for(f.cell_m):g} min", "COMPUTATIONAL MODEL"),
         ("Fire spread / burned area", "FireSpreadSimulator (cellular automata)"
          + (f", base spread probability {p.get('base_spread_prob')} (local calibration), seed {p.get('seed')}" if p else ""),
