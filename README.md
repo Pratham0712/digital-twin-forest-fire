@@ -51,6 +51,18 @@ measured hit rates (`src/ml_models/risk_index.py`):
 | HIGH or above | 8.7% | 48.4% | 24.2% |
 | MODERATE or above | 28.3% | 83.5% | 12.8% |
 
+### Second hold-out (Jan to Apr 2026) and spread back-test
+
+The same trained models, scored on 2026 data they never saw (Karnataka, 43,400 zone-days):
+XGBoost AUC-ROC 0.816 (average precision 0.204), Random Forest 0.824 (0.201). That is lower than
+the 2025 hold-out (0.870), so the 2025 figure should not be read as a guarantee. The top 10% of
+zone-days by risk still capture 41.6% of fires (4.2x random).
+
+The fire-spread simulator has not been shown to beat a naive baseline. In a next-day back-test
+(`scripts/validate_spread.py`, results in `data/processed/eval_spread_validation.csv`) it clearly beats
+random cells, but "spread to every neighbouring cell" scores about the same F1 (2025: 0.168 vs 0.176).
+Treat the spread output as a scenario illustration, not a validated forecast.
+
 Beyond the core prediction pipeline, the system also:
 - **Persists every refresh** (snapshots, alerts, users, activity) to
   **MySQL** via SQLAlchemy when `DATABASE_URL` is set, with a zero-setup
