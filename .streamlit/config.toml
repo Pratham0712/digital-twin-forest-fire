@@ -12,3 +12,9 @@ primaryColor = "#FF7A18"
 backgroundColor = "#080B12"
 secondaryBackgroundColor = "#111722"
 textColor = "#E8EDF3"
+
+[client]
+# One application menu: the dashboard's own "⋮" (Appearance + Rerun / Clear cache / Print,
+# src/dashboard/components/theme_switch). "minimal" is Streamlit's supported setting that hides
+# its own toolbar menu and Deploy button; set back to "auto" to restore them.
+toolbarMode = "minimal"

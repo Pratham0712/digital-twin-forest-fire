@@ -22,6 +22,7 @@ from src.data_processing.feature_engineering import DataProcessor
 from src.ml_models.explain import contributions, sigmoid
 from src.ml_models.model_registry import choose_for_region, india_state_metrics
 
+from src.dashboard.ui.charts import CHART_CONFIG
 from src.auth.auth_gate import require_login
 
 set_page("Model Insights")
@@ -115,7 +116,7 @@ else:
                                      name=f"{season} season", line=dict(color=_SEASON_COLOR.get(str(season), "#8a96a6"))))
         fig.add_trace(go.Scatter(x=[0, 30], y=[0, 30], mode="lines", name="Random", line=dict(color="#5b6675", dash="dash")))
         fig.update_layout(**_PLOT, xaxis_title="Share of zone-days flagged (%)", yaxis_title="Fires captured (%)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
         st.dataframe(_lift.drop(columns=["region"], errors="ignore"), use_container_width=True, hide_index=True)
 
     with t_pr:
@@ -127,7 +128,7 @@ else:
             fig.add_hline(y=r["fire_rate"], line=dict(color="#5b6675", dash="dot"),
                           annotation_text=f"random ({r['season']})", annotation_font_color="#8a96a6")
         fig.update_layout(**_PLOT, xaxis_title="Recall", yaxis_title="Precision")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
         st.caption("Precision stays modest because most zone-days with elevated risk do not record a fire on that "
                    "particular day. The dotted line is what random flagging would achieve.")
 
@@ -248,7 +249,7 @@ with col_wf:
                                  tickfont={"color": "#8a96a6"}, title_font={"color": "#8a96a6"}),
                       yaxis=dict(tickfont={"color": "#c3ccd8", "size": 11}),
                       font=dict(family="Plus Jakarta Sans, sans-serif"))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
 
 with col_summary:
     st.markdown("**Global feature importance**")
@@ -260,7 +261,7 @@ with col_summary:
                           xaxis=dict(tickfont={"color": "#8a96a6"}, gridcolor="#232b36"),
                           yaxis=dict(tickfont={"color": "#c3ccd8", "size": 10}),
                           font=dict(family="Plus Jakarta Sans, sans-serif"))
-    st.plotly_chart(fig_imp, use_container_width=True)
+    st.plotly_chart(fig_imp, use_container_width=True, config=CHART_CONFIG)
 
 st.markdown("""
 <div class="info-box">

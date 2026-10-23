@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hero carousel</title>
+<style>
+  /* Command Center hero carousel.
+     Full width: the hero's height follows its width (images' aspect ratio 1627 x 967 =
+     1.68 : 1, scaled by height_scale = 0.88, i.e. 12 % shorter). Every image spans the
+     hero edge to edge (object-fit: cover, never stretched); the 12 % is trimmed mostly
+     from the bottom edge (object-position 50% 8%), where the artwork has no titles or
+     key panels. All slides share one stage, so the layout never shifts.
+     No arrows; small indicator dots only. */
+  :root { --accent: #4FB8F0; --dot: rgba(230,242,252,.55); --dots-bg: rgba(8,14,24,.42);
+          --stage: #0B111B; --border: rgba(255,255,255,.08); --fade: 700ms; }
+  :root.light { --accent: #1E88D0; --dot: rgba(255,255,255,.75); --dots-bg: rgba(15,42,68,.38);
+                --stage: #DCE7F2; --border: rgba(15,58,92,.14); }
+  :root.navy { --accent: #00B8F0; --dots-bg: rgba(3,16,31,.55); --stage: #061426; --border: #163A5E; }
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  .hc { position: relative; width: 100%; height: 100vh; border-radius: 18px; overflow: hidden;
+        background: var(--stage); border: 1px solid var(--border); box-sizing: border-box; outline: none; }
+  .hc:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .slide { position: absolute; inset: 0; opacity: 0; visibility: hidden;
+           transition: opacity var(--fade) ease-in-out, visibility 0s linear var(--fade); }
+  .slide.on { opacity: 1; visibility: visible; transition: opacity var(--fade) ease-in-out, visibility 0s; z-index: 1; }
+  .slide img { position: absolute; inset: 0; display: block; width: 100%; height: 100%;
+               object-fit: cover; object-position: 50% 8%;
+               user-select: none; -webkit-user-drag: none; pointer-events: none; }
+
+  /* indicator dots sit small in the bottom-right corner, clear of the artwork's main content */
+  .dots { position: absolute; right: 14px; bottom: 10px; z-index: 3; display: flex;
+          gap: 6px; padding: 4px 7px; border-radius: 999px; background: var(--dots-bg); }
+  .dot { width: 7px; height: 7px; border-radius: 999px; border: 0; padding: 0; cursor: pointer;
+         background: var(--dot); transition: width .3s ease, background .3s ease; }
+  .dot[aria-current="true"] { width: 20px; background: var(--accent); }
+  .dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @media (max-width: 640px) {
+    /* phones: tiny dots in the bottom-right corner, clear of the artwork's bottom panels */
+    .dots { right: 8px; bottom: 3px; padding: 2px 4px; gap: 4px; }
+    .dot { width: 5px; height: 5px; } .dot[aria-current="true"] { width: 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) { :root { --fade: 1ms; } .dot { transition: none; } }
+</style>
+</head>
+<body>
+<div class="hc" id="hc" tabindex="0" role="region" aria-roledescription="carousel" aria-label="Forest Fire Digital Twin artwork">
+  <div id="slides"></div>
+  <div class="dots" id="dots" role="group" aria-label="Slide indicators"></div>
+  <div class="sr" id="live" aria-live="polite"></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  // ── Streamlit component protocol (same message API as the fire_map component) ──
+  function send(type, data) { window.parent.postMessage(Object.assign({isStreamlitMessage: true, type: type}, data), "*"); }
+  var lastH = -1;
+  function setHeight(h) { h = Math.round(h); if (h !== lastH) { lastH = h; send("streamlit:setFrameHeight", {height: h}); } }
+
+  function heightFor(w) {
+    var c = window.__HC_CFG || {};
+    // height = width / image aspect ratio x height_scale: full width on every screen size
+    // (desktop 1320 px -> ~691 px, tablet 768 px -> ~402 px, phone 358 px -> ~189 px)
+    var fit = c.fit_ratio || 1.6825, scale = c.height_scale || 0.88, border = 2;   // 1 px border
+    return (w - border) / fit * scale + border;
+  }
+  function resize() { setHeight(heightFor(document.documentElement.clientWidth || window.innerWidth)); }
+
+  var hc = document.getElementById("hc"), slidesEl = document.getElementById("slides"),
+      dotsEl = document.getElementById("dots"), live = document.getElementById("live");
+  var slides = [], dots = [], ready = [], cur = 0, timer = null, interval = 6000, started = false;
+
+  function resolve(src) {
+    if (/^(data:|https?:|\/)/.test(src)) return src;
+    // "app/static/..." is served from the Streamlit server root; this page lives at
+    // <root>/component/<name>/index.html, so the root is two levels up (works with a base URL path too).
+    return new URL("../../" + src, window.location.href).href;
+  }
+
+  function build(items) {
+    items.forEach(function (it, i) {
+      var s = document.createElement("div");
+      s.className = "slide";
+      s.setAttribute("role", "group");
+      s.setAttribute("aria-roledescription", "slide");
+      s.setAttribute("aria-label", (i + 1) + " of " + items.length + ": " + it.title);
+      s.setAttribute("aria-hidden", "true");
+      var img = new Image(); img.className = "fg";
+      img.alt = it.alt; img.draggable = false; img.decoding = "async";
+      // preload + decode before a slide may become visible: no blank frame, no pop-in
+      ready[i] = new Promise(function (res) {
+        img.onload = function () { (img.decode ? img.decode() : Promise.resolve()).catch(function () {}).then(res); };
+        img.onerror = function () { res(); };
+      });
+      img.src = resolve(it.src);
+      s.appendChild(img);
+      slidesEl.appendChild(s); slides.push(s);
+
+      var d = document.createElement("button");
+      d.type = "button"; d.className = "dot";
+      d.setAttribute("aria-label", "Show image " + (i + 1) + " of " + items.length + ": " + it.title);
+      d.addEventListener("click", function () { go(i, true); });
+      dotsEl.appendChild(d); dots.push(d);
+    });
+  }
+
+  function paint(i) {
+    slides.forEach(function (s, k) { var on = k === i; s.classList.toggle("on", on); s.setAttribute("aria-hidden", on ? "false" : "true"); });
+    dots.forEach(function (d, k) { d.setAttribute("aria-current", k === i ? "true" : "false"); });
+  }
+
+  function go(i, manual) {
+    var n = slides.length; if (!n) return;
+    i = ((i % n) + n) % n;
+    var token = (go._t = (go._t || 0) + 1);
+    ready[i].then(function () {
+      if (token !== go._t) return;                    // a newer navigation superseded this one
+      cur = i; paint(i);
+      if (manual) live.textContent = slides[i].getAttribute("aria-label");
+      schedule();
+    });
+  }
+
+  // Continuous autoplay: one timer, re-armed after every slide change; only paused
+  // while the browser tab is hidden (resumes with a full interval when visible again).
+  function schedule() {
+    clearTimeout(timer); timer = null;
+    if (slides.length < 2 || document.hidden) return;
+    timer = setTimeout(function () { go(cur + 1, false); }, interval);
+  }
+  document.addEventListener("visibilitychange", schedule);
+
+  // optional keyboard / swipe navigation (no on-screen arrows)
+  hc.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(cur - 1, true); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); go(cur + 1, true); }
+  });
+  var sx = null, sy = null;
+  hc.addEventListener("touchstart", function (e) { var t = e.touches[0]; sx = t.clientX; sy = t.clientY; }, {passive: true});
+  hc.addEventListener("touchend", function (e) {
+    if (sx === null) return;
+    var t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy; sx = sy = null;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > 1.5 * Math.abs(dy)) go(cur + (dx < 0 ? 1 : -1), true);
+  }, {passive: true});
+
+  // Streamlit re-sends "render" on every script rerun; the carousel is built exactly once
+  // per iframe, so reruns never add timers or reset the current slide.
+  // light styling follows Streamlit's own theme; Professional Navy Blue (the dashboard's
+  // Appearance menu: html[data-ff-theme] on the dashboard page) recolours the frame / dots
+  var stLight = false;
+  function syncLight() {
+    var navy = false;
+    try { navy = window.parent.document.documentElement.getAttribute("data-ff-theme") === "navy"; } catch (e) {}
+    document.documentElement.classList.toggle("light", stLight);
+    document.documentElement.classList.toggle("navy", navy && !stLight);
+  }
+  try { new MutationObserver(syncLight).observe(window.parent.document.documentElement, {attributes: true, attributeFilter: ["data-ff-theme"]}); } catch (e) {}
+  syncLight();
+
+  window.addEventListener("message", function (ev) {
+    var d = ev.data;
+    if (!d || d.type !== "streamlit:render") return;
+    var th = d.theme || {};
+    stLight = th.base === "light"; syncLight();
+    if (started) return;
+    started = true;
+    var args = d.args || {};
+    window.__HC_CFG = args.layout || {};
+    interval = Math.max(2000, Number(args.interval_ms) || 6000);
+    if (args.fade_ms) document.documentElement.style.setProperty("--fade", Number(args.fade_ms) + "ms");
+    var items = (args.slides || []).filter(function (s) { return s && s.src; });
+    resize();
+    build(items);
+    if (items.length) go(0, false);
+    if (items.length < 2) dotsEl.hidden = true;
+  });
+
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(document.documentElement);
+  window.addEventListener("resize", resize);
+  send("streamlit:componentReady", {apiVersion: 1});
+  resize();
+})();
+</script>
+</body>
+</html>

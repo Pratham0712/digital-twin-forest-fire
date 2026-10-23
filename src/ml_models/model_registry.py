@@ -49,6 +49,14 @@ def load_xgb(model_file: str, models_dir: Path = MODELS_DIR):
     from src.ml_models.model_trainer import XGBoostModel
     w = XGBoostModel()
     w.model.load_model(str(path))
+    # the operating points chosen at training time (not the class default)
+    from src.ml_models.prediction_service import model_metadata
+    meta = model_metadata(model_file, models_dir)
+    if meta.get("xgboost_decision_threshold") is not None:
+        w.threshold_ = float(meta["xgboost_decision_threshold"])
+    if meta.get("xgboost_alert_threshold") is not None:
+        w.alert_threshold_ = float(meta["xgboost_alert_threshold"])
+    w.feature_names_ = list(w.model.get_booster().feature_names or []) or None
     return w
 
 

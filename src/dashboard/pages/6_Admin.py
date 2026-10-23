@@ -13,7 +13,6 @@ import streamlit as st
 from src.dashboard.dashboard_common import set_page, build_sidebar
 from src.auth.auth_gate import require_login, is_admin, render_user_badge_in_sidebar, current_role
 from src.storage import database as db
-from src.notifications.email_notifier import EmailNotifier
 
 set_page("Admin")
 require_login()
@@ -78,9 +77,10 @@ tab_users, tab_history, tab_notify, tab_emerg = st.tabs(["Users", "Stored histor
 with tab_emerg:
     from src.dashboard.ui.alerts_ui import render_alert_history, render_recipient_admin
     st.subheader("Emergency-alert recipients")
-    st.caption("Opt-in only: nothing is sent automatically. Alerts are sent from a completed simulation (Spread "
-               "Simulation → Send Emergency Alert) after a review and an explicit confirmation, only to enabled "
-               "recipients on verified channels.")
+    st.caption("Manual emergency alerts: Spread Simulation → Send Emergency Alert → Email Alert / SMS to Mobile, each "
+               "after a review and an explicit confirmation. Email Alert goes to ALERT_RECIPIENT_EMAILS plus the "
+               "enabled recipients below with a verified e-mail; SMS to Mobile goes to ALERT_SMS_RECIPIENTS. "
+               "Automatic fire alerts are configured separately on the Notifications tab (off by default).")
     render_recipient_admin()
     st.subheader("Alert history and delivery status")
     render_alert_history()
@@ -107,9 +107,8 @@ with tab_users:
         if add_submitted:
             if not new_username or not new_password:
                 st.error("Username and password are both required.")
-            elif db.create_user(new_username.strip(), new_password, new_role):
-                db.log_activity("admin", f"Created {new_role} account '{new_username.strip()}'",
-                                actor=st.session_state.get("auth_user", "admin"))
+            elif db.admin_create_user(st.session_state.get("auth_user", ""), new_username.strip(), new_password,
+                                      new_role):
                 _users.clear(); _counts.clear()
                 st.success(f"Created {new_role} account '{new_username.strip()}'.")
                 st.rerun()
@@ -160,52 +159,12 @@ with tab_history:
         st.info("No alerts recorded yet.")
 
 with tab_notify:
-    st.subheader("Email notifications")
-    notifier = EmailNotifier()
-    if notifier.is_configured:
-        st.success(
-            f"Configured - alerts for newly-EXTREME zones are sent to "
-            f"{len(notifier.recipients)} recipient(s) via {notifier.smtp_host}."
-        )
-    else:
-        st.warning("Not configured yet.")
-        with st.expander("Configure email alerts"):
-            st.markdown(
-                "Add the mail server (SMTP host and port), the sender login (SMTP user and "
-                "app password) and the list of recipient emails to the app's settings "
-                "(`.env` locally, Secrets on Streamlit Cloud).\n\n"
-                "For Gmail, use an App Password (Google Account > Security > App passwords), "
-                "not your normal password."
-            )
+    from src.dashboard.ui.alerts_ui import render_auto_alerts, render_provider_config
+    render_provider_config()
+    st.markdown("---")
+    render_auto_alerts()
 
     st.markdown("---")
-    st.markdown("**Send a test alert now**")
-    st.caption(
-        "Sends a real alert email immediately, without waiting for an actual EXTREME "
-        "zone to be detected. Does not affect any stored data."
-    )
-    if st.button("Send test alert email", disabled=not notifier.is_configured):
-        from datetime import datetime, timezone
-        from src.digital_twin.twin_state import ZoneAlert
-        demo_alert = ZoneAlert(
-            zone_id="DEMO-0001", latitude=13.35, longitude=75.20, risk_score=0.91,
-            severity="EXTREME",
-            reason="extreme FWI (78.4); low humidity (11%); high wind (11.2 m/s) "
-                   "[TEST ALERT - triggered manually from the Admin page, not a real detection]",
-            triggered_at=datetime.now(timezone.utc).isoformat(),
-        )
-        with st.spinner("Sending..."):
-            sent = notifier.send_new_extreme_alert("Karnataka Western Ghats (TEST)", [demo_alert])
-        db.log_activity("email_sent" if sent else "email_failed",
-                        "Test alert email " + ("sent" if sent else "could not be sent"),
-                        actor=st.session_state.get("auth_user", "admin"))
-        if sent:
-            st.success(f"Sent - check the inbox for {', '.join(notifier.recipients)}.")
-        else:
-            st.error("Send failed - check the SMTP settings above (host, port, and app password).")
-    if not notifier.is_configured:
-        st.caption("Configure SMTP above first - the button unlocks once all four variables are set.")
-
     st.subheader("Automatic data refresh")
     interval = __import__('config.config', fromlist=['SYSTEM']).SYSTEM.min_refresh_interval_minutes
     st.success(f"Data refreshes automatically every **{interval} minutes**.")

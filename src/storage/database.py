@@ -381,6 +381,28 @@ def create_user(username: str, password: str, role: str = "viewer") -> bool:
         return False
 
 
+def user_role(username: str) -> Optional[str]:
+    if not username:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(select(users.c.role).where(users.c.username == username)).first()
+    return row.role if row else None
+
+
+def admin_create_user(actor: str, username: str, password: str, role: str = "viewer") -> bool:
+    """The only account-creation path for the running app: `actor` must be an existing ADMIN account (checked in
+    the database, not trusted from the caller). There is no public / unauthenticated registration."""
+    if user_role(actor) != "admin":
+        raise PermissionError("Only a signed-in administrator can create accounts.")
+    username = (username or "").strip()
+    if not username or not password:
+        raise ValueError("username and password are required")
+    ok = create_user(username, password, role)
+    if ok:
+        log_activity("admin", f"Created {role} account '{username}'", actor=actor)
+    return ok
+
+
 def verify_user(username: str, password: str) -> Optional[str]:
     """Role ('admin'/'viewer') if the credentials are valid, else None.
     Constant-time comparison avoids timing side-channels."""

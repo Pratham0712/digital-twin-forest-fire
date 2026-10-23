@@ -6,12 +6,14 @@ from src.dashboard.ui.assets import LOGIN_BACKGROUND, data_uri
 
 def login_css() -> str:
     bg = data_uri(LOGIN_BACKGROUND)
-    bg_layer = f", url('{bg}') center / cover no-repeat fixed" if bg else ""
+    bg_layer = ", var(--ff-login-bg) center / cover no-repeat fixed" if bg else ""
+    bg_var = f".stApp {{ --ff-login-bg: url('{bg}'); }}" if bg else ""   # also used by the navy theme
     return """
 <style>
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], [data-testid="stSidebarNav"],
 [data-testid="stExpandSidebarButton"] { display: none !important; }
 [data-testid="stHeader"] { background: transparent !important; }
+""" + bg_var + """
 .stApp { background: linear-gradient(180deg, rgba(6,8,13,0.80), rgba(6,8,13,0.92))""" + bg_layer + """, #080B12 !important; }
 .block-container { padding-top: 7vh !important; max-width: 1200px; }
 .st-key-login_card { background: rgba(13,17,26,0.72); border: 1px solid rgba(255,255,255,0.10); border-radius: 20px;
@@ -33,6 +35,20 @@ def login_css() -> str:
     font-weight: 800 !important; letter-spacing: .14em; min-height: 44px; }
 .st-key-login_card [data-testid="stFormSubmitButton"] button p { text-transform: uppercase; font-weight: 800 !important; }
 .st-key-login_card [data-testid="stFormSubmitButton"] button:hover { box-shadow: 0 10px 26px rgba(255,90,30,0.35) !important; }
+/* Streamlit's "Press Enter to submit form" hint sits inside the input next to the eye icon: hide it there and show
+   a hint below the password field instead (Enter still submits the form). */
+.st-key-login_card [data-testid="InputInstructions"] { display: none !important; }
+.st-key-login_card [data-testid="stTextInputRootElement"] { overflow: hidden; }
+.st-key-login_card [data-testid="stTextInputRootElement"] input { padding-right: 12px !important; min-width: 0; }
+.st-key-login_card [data-testid="stFormSubmitButton"] { margin-top: 10px; }
+.st-key-login_card [data-testid="stFormSubmitButton"] button { width: 100% !important; }
+.lg-hint { font-size: 11.5px; color: #7F8A99; margin: -4px 0 2px 2px; }
+@media (min-width: 641px) and (max-width: 1100px) {   /* tablets: keep the card wide enough */
+  [data-testid="stColumn"]:has(.st-key-login_card) { min-width: min(420px, 90vw) !important; } }
+@media (max-width: 640px) {
+  .block-container { padding-top: 4vh !important; padding-left: 12px !important; padding-right: 12px !important; }
+  .st-key-login_card { padding: 22px 16px 16px 16px; border-radius: 16px; }
+  .lg-title { font-size: 18px; } }
 .lg-note { font-size: 12.5px; color: #9AA5B4; line-height: 1.6; background: rgba(255,255,255,0.03);
     border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 12px 14px; margin-top: 6px; }
 .lg-foot { text-align: center; font-size: 11.5px; color: #6F7B8B; margin-top: 10px; }
@@ -48,13 +64,6 @@ BRAND_HTML = """
   <div class="lg-inst">BMS COLLEGE OF ENGINEERING</div>
   <div class="lg-sub">Secure Research Command Center</div>
 </div>
-"""
-
-CREATE_ACCOUNT_HTML = """
-<div class="lg-note"><b style="color:#E8EDF3">Accounts are issued by an administrator.</b><br/>
-This deployment has no self-registration: an admin creates viewer or admin accounts on the
-<b>Admin</b> page, where passwords are stored only as salted PBKDF2 hashes. Ask your project
-administrator for an account, then sign in on the first tab.</div>
 """
 
 FOOT_HTML = '<div class="lg-foot">Session-based sign-in · activity is logged · ISE Batch 42</div>'

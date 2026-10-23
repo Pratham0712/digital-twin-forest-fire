@@ -27,6 +27,7 @@ from src.dashboard.dashboard_common import (
     SEV_COLOR, SYSTEM, DATA_RAW_DIR, log_action,
 )
 
+from src.dashboard.ui.charts import CHART_CONFIG
 from src.auth.auth_gate import require_login
 
 set_page("AI Situation Briefing")
@@ -135,7 +136,7 @@ def render_briefing_card(d: dict):
         # Explicit key: batch mode renders one gauge per zone in a loop, and
         # without a key Streamlit can't tell otherwise-identical-looking
         # plotly_chart calls apart, raising StreamlitDuplicateElementId.
-        st.plotly_chart(fig, use_container_width=True, key=f"briefing_gauge_{d['zone_id']}")
+        st.plotly_chart(fig, use_container_width=True, key=f"briefing_gauge_{d['zone_id']}", config=CHART_CONFIG)
     with col_compass:
         if not np.isnan(d["wind_deg"]) and not np.isnan(d["wind_speed"]):
             render_wind_compass(float(d["wind_deg"]), float(d["wind_speed"]), label="Wind")

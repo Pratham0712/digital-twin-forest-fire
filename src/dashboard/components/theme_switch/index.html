@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Application menu</title></head>
+<body style="margin:0">
+<script>
+/* The ONE application menu ("⋮", top-right of every page).
+
+   Streamlit's own toolbar menu is switched off with its supported setting
+   client.toolbarMode = "minimal" (.streamlit/config.toml); this menu replaces it:
+     Appearance   Default Dark / Professional Navy Blue (check on the active one)
+     Application  Rerun · Clear cache · Print
+
+   This invisible component installs ONE small controller into the dashboard page (the
+   parent document; component iframes are same-origin), once per browser tab:
+     * the theme is kept on <html data-ff-theme="dark|navy">; every navy rule in
+       ui/theme_switch.py is scoped to html[data-ff-theme="navy"], so switching theme is
+       a pure CSS change (no rerun, no reload, no state change). The choice is stored in
+       the browser (localStorage "ffdt-theme"); Default Dark when nothing is stored;
+     * Rerun / Clear cache are real Streamlit actions: the menu asks this component to
+       send a value to Python (render_theme_switch handles it: a normal script rerun, and
+       st.cache_data / st.cache_resource .clear() for Clear cache);
+     * Print is the browser's print of the page (what Streamlit's own Print item does).
+   The menu button is the controller's own fixed element; Streamlit's header is not
+   modified. Reruns and page changes never add duplicate listeners or buttons. */
+(function () {
+  "use strict";
+  var NONCE = 0;
+  function send(type, data) { window.parent.postMessage(Object.assign({isStreamlitMessage: true, type: type}, data), "*"); }
+  function request(action) {                      // Python receives {action, nonce} and acts once per nonce
+    NONCE += 1;
+    send("streamlit:setComponentValue", {value: {action: action, nonce: Date.now() + "-" + NONCE}, dataType: "json"});
+  }
+  send("streamlit:componentReady", {apiVersion: 1});
+  send("streamlit:setFrameHeight", {height: 0});
+
+  var P;
+  try { P = window.parent; void P.document.documentElement; } catch (e) { return; }   // not same-origin: nothing to do
+  var VERSION = 3;
+  function register() { if (P.__ffTheme) { P.__ffTheme.bridge = request; P.__ffTheme.apply(P.__ffTheme.get()); P.__ffTheme.mount(); } }
+  window.addEventListener("message", function (ev) {           // each page's (re)render: this iframe is the live bridge
+    if (ev.data && ev.data.type === "streamlit:render") register();
+  });
+  if (P.__ffTheme && P.__ffTheme.version >= VERSION) { register(); return; }
+
+  var code = "(" + function (VERSION) {
+    var KEY = "ffdt-theme", THEMES = [["dark", "Default Dark"], ["navy", "Professional Navy Blue"]];
+    var ACTIONS = [
+      ["rerun", "Rerun", "R", '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'],
+      ["clear_cache", "Clear cache", "", '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'],
+      ["print", "Print", "", '<path d="M7 9V3h10v6M7 17H4v-7h16v7h-3"/><path d="M7 14h10v7H7z"/>']
+    ];
+    var root = document.documentElement, api;
+    function get() { try { var v = localStorage.getItem(KEY); return v === "navy" ? "navy" : "dark"; } catch (e) { return root.getAttribute("data-ff-theme") || "dark"; } }
+    function apply(t) {
+      t = t === "navy" ? "navy" : "dark";
+      if (root.getAttribute("data-ff-theme") !== t) root.setAttribute("data-ff-theme", t);
+      var items = document.querySelectorAll("#ff-theme-menu [data-theme]");
+      for (var i = 0; i < items.length; i++) items[i].setAttribute("aria-checked", items[i].getAttribute("data-theme") === t ? "true" : "false");
+    }
+    function set(t) { try { localStorage.setItem(KEY, t); } catch (e) {} apply(t); close(); }
+    function act(a) {
+      close();
+      if (a === "print") { setTimeout(function () { window.print(); }, 60); return; }
+      try { if (api.bridge) api.bridge(a); } catch (e) { console.error("application menu:", e); }
+    }
+
+    var btn, menu, wrapEl = null;
+    function close() { if (menu) menu.hidden = true; if (btn) btn.setAttribute("aria-expanded", "false"); }
+    function open() {
+      menu.hidden = false; btn.setAttribute("aria-expanded", "true");
+      var dis = !api.bridge;                       // Rerun / Clear cache need a live page component
+      menu.querySelectorAll('[data-action="rerun"],[data-action="clear_cache"]').forEach(function (b) { b.disabled = dis; });
+      var cur = menu.querySelector('[aria-checked="true"]') || menu.querySelector("[data-theme]");
+      if (cur) cur.focus();
+    }
+    function build() {
+      var w = document.createElement("div");
+      w.id = "ff-theme-wrap";
+      w.innerHTML =
+        '<button id="ff-theme-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="ff-theme-menu" ' +
+        'title="Menu" aria-label="Application menu">' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="19" r="1.9"/></svg>' +
+        '</button>' +
+        '<div id="ff-theme-menu" role="menu" aria-label="Application menu" hidden>' +
+        '<div class="ff-tm-title" role="presentation">Appearance</div>' +
+        THEMES.map(function (t) {
+          return '<button type="button" role="menuitemradio" aria-checked="false" data-theme="' + t[0] + '">' +
+                 '<span class="ff-tm-sw ff-tm-' + t[0] + '" aria-hidden="true"></span><span class="ff-tm-l">' + t[1] + '</span>' +
+                 '<svg class="ff-tm-ck" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg></button>';
+        }).join("") +
+        '<div class="ff-tm-sep" role="separator"></div>' +
+        '<div class="ff-tm-title" role="presentation">Application</div>' +
+        ACTIONS.map(function (a) {
+          return '<button type="button" role="menuitem" data-action="' + a[0] + '"><svg viewBox="0 0 24 24" aria-hidden="true">' + a[3] +
+                 '</svg><span class="ff-tm-l">' + a[1] + '</span>' + (a[2] ? '<span class="ff-tm-k">' + a[2] + '</span>' : '') + '</button>';
+        }).join("") + '</div>';
+      btn = w.querySelector("#ff-theme-btn"); menu = w.querySelector("#ff-theme-menu");
+      btn.addEventListener("click", function (e) { e.stopPropagation(); menu.hidden ? open() : close(); });
+      menu.addEventListener("click", function (e) {
+        var t = e.target.closest("[data-theme]"), a = e.target.closest("[data-action]");
+        if (t) { e.stopPropagation(); set(t.getAttribute("data-theme")); btn.focus(); }
+        else if (a && !a.disabled) { e.stopPropagation(); act(a.getAttribute("data-action")); }
+      });
+      menu.addEventListener("keydown", function (e) {
+        var its = Array.prototype.slice.call(menu.querySelectorAll("[data-theme],[data-action]:not(:disabled)")),
+            i = its.indexOf(document.activeElement);
+        if (e.key === "ArrowDown") { e.preventDefault(); its[(i + 1) % its.length].focus(); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); its[(i - 1 + its.length) % its.length].focus(); }
+        else if (e.key === "Escape") { e.preventDefault(); close(); btn.focus(); }
+      });
+      return w;
+    }
+    function mount() {                               // the controller's own fixed element, outside Streamlit's header
+      if (!wrapEl) wrapEl = build();
+      if (!wrapEl.isConnected) document.body.appendChild(wrapEl);
+      apply(get());
+    }
+    document.addEventListener("click", function (e) { if (menu && !menu.hidden && !e.target.closest("#ff-theme-wrap")) close(); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && menu && !menu.hidden) close(); });
+    window.addEventListener("storage", function (e) { if (e.key === KEY) apply(get()); });   // other tabs
+    new MutationObserver(function () { if (wrapEl && !wrapEl.isConnected) mount(); }).observe(document.body, {childList: true});
+
+    api = window.__ffTheme = {version: VERSION, get: get, apply: apply, set: set, mount: mount, bridge: null};
+    apply(get());
+    mount();
+  } + ")(" + VERSION + ");";
+
+  var old = P.document.getElementById("ff-theme-wrap");           // an older controller's button (same tab, app upgraded)
+  if (old) old.remove();
+  var s = P.document.createElement("script");
+  s.id = "ff-theme-controller";
+  s.textContent = code;
+  P.document.head.appendChild(s);
+  register();
+})();
+</script>
+</body>
+</html>

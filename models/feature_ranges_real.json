@@ -1,0 +1,114 @@
+{
+ "model_file": "xgboost_real.json",
+ "source": "training rows 2023-01-01 to 2024-05-31",
+ "note": "1st-99th percentile of each feature on the training rows; inputs outside it are extrapolation for the tree model",
+ "ranges": {
+  "wx_temperature_c": [
+   13.5,
+   34.0
+  ],
+  "wx_humidity_pct": [
+   25.0,
+   89.0
+  ],
+  "wx_wind_speed_ms": [
+   1.611,
+   6.167
+  ],
+  "wx_precipitation_mm": [
+   0.0,
+   28.7
+  ],
+  "ffmc": [
+   30.282,
+   91.677
+  ],
+  "dmc": [
+   6.585,
+   29.523
+  ],
+  "dc": [
+   5.688,
+   23.236
+  ],
+  "bui": [
+   6.767,
+   28.647
+  ],
+  "fwi": [
+   1.501,
+   33.662
+  ],
+  "month": [
+   1.0,
+   5.0
+  ],
+  "day_of_year": [
+   2.0,
+   150.0
+  ],
+  "fwi_lag1": [
+   1.501,
+   33.662
+  ],
+  "zone_clim": [
+   0.0,
+   0.199
+  ],
+  "nbr_clim": [
+   0.0,
+   0.131
+  ],
+  "latitude": [
+   11.55,
+   15.45
+  ],
+  "longitude": [
+   74.05,
+   77.45
+  ],
+  "fire_lag1": [
+   0.0,
+   1.0
+  ],
+  "fire_7d": [
+   0.0,
+   3.0
+  ],
+  "fire_10d": [
+   0.0,
+   5.0
+  ],
+  "nbr3_lag1": [
+   0.0,
+   4.0
+  ],
+  "nbr5_7d": [
+   0.0,
+   49.0
+  ],
+  "days_since_fire": [
+   1.0,
+   11.0
+  ],
+  "region_fires_lag1": [
+   0.0,
+   227.0
+  ],
+  "elev_m": [
+   0.0,
+   1066.288
+  ],
+  "slope_pct": [
+   0.0,
+   10.451
+  ]
+ },
+ "months_seen": [
+  1,
+  2,
+  3,
+  4,
+  5
+ ]
+}

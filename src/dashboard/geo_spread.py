@@ -33,6 +33,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config.config import SYSTEM
+from src.dashboard.ui.charts import CHART_CONFIG
 from src.dashboard.dashboard_common import _compass_direction_name, log_action
 from src.dashboard.geo_fire_map import (duration_label, hotspots_near, missing_key_card, new_event,
                                         render_fire_map, setup_payload, sim_payload)
@@ -470,7 +471,7 @@ def _location_notes(setup: dict, twin):
     r = twin.region
     if not (r.min_lat <= loc["lat"] <= r.max_lat and r.min_lon <= loc["lon"] <= r.max_lon):
         snap = twin.current_snapshot
-        c = zone_conditions(snap.processed_grid, snap.risk_scores, loc["lat"], loc["lon"])
+        c = zone_conditions(snap.processed_grid, snap.risk_scores, loc["lat"], loc["lon"], getattr(snap, "prediction", None))
         st.warning(f"{loc['name']} is outside the selected region ({r.name}). Weather, fuel and risk come from the "
                    f"nearest grid zone, {c['zone_distance_km']:.0f} km away. Choose the matching region in the "
                    f"sidebar for local conditions.")
@@ -587,7 +588,7 @@ def build_simulation_config(twin, scenario: dict, setup: dict, live: Optional[di
     detections and the ignition source (OBSERVED / HYPOTHETICAL / NONE)."""
     snap = twin.current_snapshot
     loc = setup["location"]
-    cond = zone_conditions(snap.processed_grid, snap.risk_scores, loc["lat"], loc["lon"])
+    cond = zone_conditions(snap.processed_grid, snap.risk_scores, loc["lat"], loc["lon"], getattr(snap, "prediction", None))
     summary = twin.get_summary()
     sev = next((a.severity for a in snap.alerts if a.zone_id == cond["zone_id"]), "LOW")
     r = twin.region
@@ -699,7 +700,7 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
 
     f = focus_from_setup(setup)
     loc = setup["location"]
-    cond = zone_conditions(snap.processed_grid, snap.risk_scores, f.lat, f.lon)
+    cond = zone_conditions(snap.processed_grid, snap.risk_scores, f.lat, f.lon, getattr(snap, "prediction", None))
     plan = sev = None
     if lmode:
         sev = twin.alert_engine.classify(float(cond["risk_score"])) if np.isfinite(cond["risk_score"]) else "UNKNOWN"
@@ -1176,7 +1177,7 @@ def _render_analytics(result, setup: dict):
                                   tickfont={"color": "#8a96a6", "size": 10}),
                       legend=dict(orientation="h", y=1.12, x=0, font={"color": "#8a96a6", "size": 10},
                                   bgcolor="rgba(0,0,0,0)"))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
 
 
 def _render_exports(result, kp: str):
@@ -1234,6 +1235,11 @@ def _region_row(result) -> str:
     return txt
 
 
+def _categorize(v: float) -> str:
+    from src.ml_models.prediction_service import categorize
+    return categorize(v)
+
+
 def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: Optional[dict], wind_label: str,
                        live: Optional[dict] = None, plan: Optional[dict] = None):
     p = result.params if result is not None else {}
@@ -1259,7 +1265,11 @@ def _render_provenance(cond: dict, result, f: FocusArea, setup: dict, scenario: 
         ("Wind", wind_label, {"live": "LIVE WEATHER (REAL OBSERVATION)", "whatif": "SCENARIO INPUT (WHAT-IF)"}.get(
             lmode, "SCENARIO INPUT" if scenario else "LIVE / DEMO")),
         ("FFMC / BUI / FWI", f"{cond['ffmc']:.1f} / {cond['bui']:.1f} / {cond['fwi']:.1f} (zone {cond['zone_id']})", "DERIVED"),
-        ("Model risk", f"{cond['risk_score']:.0%}" if np.isfinite(cond["risk_score"]) else "-", "DERIVED (XGBoost)"),
+        ("Model risk index", (f"{cond['risk_score']:.0%} index ({_categorize(float(cond['risk_score']))})"
+                              + (f" · model fire probability {cond['fire_probability']:.2%}"
+                                 if np.isfinite(cond.get("fire_probability", float("nan"))) else "")
+                              + (f" · model {cond['model_version']}" if cond.get("model_version") else ""))
+         if np.isfinite(cond["risk_score"]) else "-", "MODEL PREDICTION (risk index, not a probability)"),
         _fuel_row(result, cond),
         ("Land cover", "Not used for fire propagation. A lightweight OpenStreetMap check of the exact clicked point "
                        "rejects hypothetical ignitions on mapped roads, buildings / built-up areas, water and bare "

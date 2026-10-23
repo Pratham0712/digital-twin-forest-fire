@@ -144,12 +144,8 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, input:focus-v
 @keyframes gtScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes gtBlink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
-/* ── Command Center hero (supplied artwork, never cropped or stretched; plain <img>, no toolbar) ── */
-.cc-hero { position: relative; width: 100%; border-radius: 18px; overflow: hidden; line-height: 0;
-    border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 22px 60px rgba(0,0,0,0.45); animation: heroIn .9s ease-out both; }
-.cc-hero img { display: block; width: 100%; height: auto; max-width: 100%; object-fit: contain;
-    user-select: none; -webkit-user-drag: none; pointer-events: none; }
-.cc-hero-note { font-size: 11.5px; color: #6F7B8B; margin: 8px 4px 0 4px; }
+/* ── Command Center hero: three-image carousel (components/hero_carousel/index.html, own iframe styles) ── */
+.cc-hero-note { font-size: 11.5px; color: #6F7B8B; margin: -6px 4px 0 4px; }
 @keyframes heroIn { from { opacity: 0; transform: scale(1.012); } to { opacity: 1; transform: scale(1); } }
 
 /* ── live status strip ── */

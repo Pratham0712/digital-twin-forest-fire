@@ -14,11 +14,23 @@ import os
 
 import streamlit as st
 
-from src.dashboard.ui.assets import ALERT_THUMB, HERO_IMAGE, HERO_URL, data_uri
+import streamlit.components.v1 as components
+from pathlib import Path
+
+from src.dashboard.ui.assets import ALERT_THUMB, ALERT_THUMB_STATIC, ALERT_THUMB_URL, HERO_SLIDES, data_uri
 from src.dashboard.ui.global_ticker import (compass, data_badge, feed_status, feed_text, latest_spread, maps_item,
                                            regional_wind)
 
 SPREAD_PAGE = "pages/2_Spread_Simulation.py"
+
+_hero_carousel = components.declare_component(
+    "hero_carousel", path=str(Path(__file__).resolve().parents[1] / "components" / "hero_carousel"))
+HERO_INTERVAL_MS = 6000          # autoplay: one image every 6 s
+HERO_FADE_MS = 700               # crossfade duration
+# hero height = (width - 2) / fit_ratio * height_scale + 2 (1 px border): full width, 12 %
+# shorter than the images' own shape; the trim comes mostly off their bottom edges.
+# Desktop 1320 px -> ~691 px; 768 px tablet -> ~402 px; 358 px phone -> ~189 px.
+HERO_LAYOUT = {"fit_ratio": round(1627 / 967, 4), "height_scale": 0.88}
 
 ICONS = {
     "grid": '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>'
@@ -45,19 +57,29 @@ def svg_icon(name: str) -> str:
 # ── hero ───────────────────────────────────────────────────────────────────── #
 
 def render_dashboard_hero():
-    """The supplied artwork, full width, natural aspect ratio (no crop, no
-    stretch), rounded with a subtle border. Rendered as a plain <img> from
-    Streamlit's static file server: no st.image toolbar, so no fullscreen /
-    expand button appears over it. Falls back to an inline copy if static
-    serving is switched off."""
-    if not HERO_IMAGE.exists():
+    """Three-image hero carousel (the supplied artwork, see assets.HERO_SLIDES).
+
+    A small declared component (components/hero_carousel/index.html): one image at a
+    time, filling the full width and shown top to bottom (the hero's height follows its
+    width at the images' aspect ratio; never stretched); continuous 6 s autoplay with a
+    0.7 s crossfade (paused only while the browser tab is hidden), small indicator dots,
+    no arrows. The arguments never change between
+    reruns, so Streamlit keeps the same iframe mounted: reruns do not restart the
+    slideshow or add timers, and slide changes never rerun the app (it returns no
+    value). Images come from Streamlit's static file server; inline copies are used
+    only if static serving is switched off."""
+    slides = [s for s in HERO_SLIDES if s["path"].exists()]
+    if not slides:
         return
-    src = HERO_URL if _static_serving_enabled() else data_uri(HERO_IMAGE)
+    static = _static_serving_enabled()
+    _hero_carousel(
+        slides=[{"src": s["url"] if static else data_uri(s["path"]), "title": s["title"], "alt": s["alt"]}
+                for s in slides],
+        interval_ms=HERO_INTERVAL_MS, fade_ms=HERO_FADE_MS, layout=HERO_LAYOUT,
+        key="cc_hero_carousel", default=None)
     st.markdown(
-        f'<div class="cc-hero"><img src="{src}" alt="Forest Fire Digital Twin: from satellite observations to '
-        f'predictive action (illustrative artwork)" draggable="false" loading="eager" decoding="async"/></div>'
-        '<div class="cc-hero-note">Illustrative concept artwork. Figures painted into the image (wind, burned '
-        'area, spread rate) are not live values; the live and simulated values are in the panels below.</div>',
+        '<div class="cc-hero-note">Illustrative concept artwork. Figures painted into the images (weather readings, '
+        'burned area, spread rate) are not live values; the live and simulated values are in the panels below.</div>',
         unsafe_allow_html=True)
 
 
@@ -157,7 +179,7 @@ def alert_panel_model(twin, summary: dict) -> dict:
             "chips": [("", "MODEL PREDICTION"), data_chip],
             "title": f"Highest-risk zone {a.zone_id} · {twin.region.name}",
             "meta": f"{a.latitude:.3f}°N, {a.longitude:.3f}°E · {a.reason or 'model risk score above threshold'}",
-            "stats": [("Risk score", f"{a.risk_score:.0%}", sev == "EXTREME"),
+            "stats": [("Risk index", f"{a.risk_score:.0%}", sev == "EXTREME"),
                       ("Severity", sev, sev == "EXTREME"),
                       ("Alert zones", f"{summary.get('total_alerts', 0)}", False),
                       ("Regional wind", wind_txt, False)],
@@ -178,7 +200,8 @@ def render_fire_alert_panel(twin, summary: dict):
     m = alert_panel_model(twin, summary)
     chips = "".join(f'<span class="chip {c}">{html.escape(t)}</span>' for c, t in m["chips"])
     stats = "".join(_stat(*s) for s in m["stats"])
-    thumb = data_uri(ALERT_THUMB)
+    # served (and browser-cached) as a static file instead of ~54 KB of inline base64 on every rerun
+    thumb = ALERT_THUMB_URL if _static_serving_enabled() and ALERT_THUMB_STATIC.exists() else data_uri(ALERT_THUMB)
     with st.container(key="cc_alert"):
         st.markdown(f"""
 <div class="fa {m['state']}" role="alert" aria-live="polite">
@@ -235,8 +258,14 @@ def render_system_status(twin, summary: dict, offline: bool):
     elif persist.get("persisted"):
         db_cls, db_txt = "ok", "Connected · snapshot saved"
         if persist.get("new_extreme_count"):
-            db_txt += (f" · {persist['new_extreme_count']} newly-extreme zone(s), "
-                       + ("email sent" if persist.get("emailed") else "email not configured"))
+            db_txt += f" · {persist['new_extreme_count']} newly-extreme zone(s)"
+        auto = persist.get("auto_alert") or {}
+        if auto.get("decision") and auto["decision"] != "not_eligible":
+            from src.notifications.auto_alerts import describe_channel, describe_decision
+            db_txt += f" · auto-alert: {describe_decision(auto['decision'])}"
+            if auto["decision"] == "sent":
+                db_txt += (f" (SMS: {describe_channel(auto.get('sms_status'), 'sms')}; "
+                           f"email: {describe_channel(auto.get('email_status'), 'email')})")
     elif persist:
         db_cls, db_txt = "warn", "Snapshot not saved (database unavailable this run)"
     else:

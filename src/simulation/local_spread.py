@@ -499,7 +499,7 @@ def resolve_focus(choice: str, processed: pd.DataFrame, risk_scores: np.ndarray)
 # ── conditions from the regional twin ─────────────────────────────────────── #
 
 def zone_conditions(processed: pd.DataFrame, risk_scores: Optional[np.ndarray],
-                    lat: float, lon: float) -> dict:
+                    lat: float, lon: float, prediction: Optional[dict] = None) -> dict:
     """Values of the regional grid zone nearest to (lat, lon), plus the
     distance from the point to that zone's centre."""
     p = processed.reset_index(drop=True)
@@ -514,6 +514,8 @@ def zone_conditions(processed: pd.DataFrame, risk_scores: Optional[np.ndarray],
         "zone_id": str(row["zone_id"]), "zone_lat": float(row["latitude"]), "zone_lon": float(row["longitude"]),
         "zone_distance_km": round(float(math.sqrt(d2.iloc[i])) * 111.32, 2),
         "risk_score": float(risk_scores[i]) if risk_scores is not None and len(risk_scores) > i else float("nan"),
+        "fire_probability": g("fire_probability"), "ml_risk_score": g("ml_risk_score"),
+        "model_version": (prediction or {}).get("model_version"), "predicted_utc": (prediction or {}).get("predicted_utc"),
         "ffmc": g("ffmc"), "bui": g("bui"), "fwi": g("fwi"), "ndvi": g("ndvi"), "dmc": g("dmc"), "dc": g("dc"),
         "temp_c": g("wx_temperature_c"), "humidity_pct": g("wx_humidity_pct"),
         "wind_speed_ms": g("wx_wind_speed_ms", 0.0), "wind_from_deg": g("wx_wind_deg", 0.0),
@@ -771,7 +773,7 @@ def _active_sides(state: np.ndarray, safety: int, steps_left: int) -> Dict[str, 
     return {k: v < safety and v <= steps_left + 1 for k, v in d.items()}
 
 
-def run_local_spread(focus: FocusArea, conditions: dict, wind_speed_ms: float, wind_from_deg: float,
+def _run_local_spread_core(focus: FocusArea, conditions: dict, wind_speed_ms: float, wind_from_deg: float,
                      n_ignition: int = 3, placement: str = "Upwind edge", seed: int = 42,
                      horizon_minutes: Optional[float] = None,
                      elevation: Optional[np.ndarray] = None, terrain_source: str = "flat",
@@ -1482,6 +1484,45 @@ def _run_ros(focus, dom, conditions, ca, dryness, buildup, fuel, non_fuel, eleva
     result.fireline_kw = kw
     result.timings = tm.as_dict()
     return result
+
+
+def simulation_clock(result: "LocalSpreadResult", started_utc: str, completed_utc: str, runtime_s: float) -> dict:
+    """Clock accounting of a completed run. Simulated time and computer runtime are
+    separate quantities: the CA advances in seconds of SIMULATED time (adaptive
+    sub-steps, recorded every frame) until exactly the requested duration."""
+    p = result.params
+    requested = float(result.duration_minutes)
+    simulated = float(result.history[-1].minutes_elapsed) if result.history else 0.0
+    ext = p.get("extinguished_at_min")
+    n_sub = p.get("n_substeps")
+    return {
+        "requested_min": requested, "requested_s": round(requested * 60.0, 3),
+        "simulated_min": round(simulated, 6), "simulated_s": round(simulated * 60.0, 3),
+        "frame_s": round(float(result.step_minutes) * 60.0, 3), "n_frames": max(0, len(result.history) - 1),
+        "substep_s": round(float(p["substep_minutes"]) * 60.0, 3) if p.get("substep_minutes") else None,
+        "n_substeps": int(n_sub) if n_sub is not None else None,
+        "started_utc": started_utc, "completed_utc": completed_utc, "runtime_s": round(float(runtime_s), 3),
+        "fire_active_until_min": None if ext is None else float(ext),
+        "status": ("completed" if abs(simulated - requested) < 1e-6 else "incomplete")
+                  + ("" if ext is None else f" (fire activity ended at T+{float(ext):g} min; clock ran to the end)"),
+    }
+
+
+def run_local_spread(*args, **kwargs) -> "LocalSpreadResult":
+    """Runs the fire-spread model for exactly the requested SIMULATED duration and
+    attaches the clock accounting (result.params["clock"]). See
+    _run_local_spread_core for the arguments."""
+    import time as _time
+    from datetime import datetime as _dt, timezone as _tz
+    started = _dt.now(_tz.utc).isoformat(timespec="seconds")
+    t0 = _time.perf_counter()
+    result = _run_local_spread_core(*args, **kwargs)
+    result.params["clock"] = simulation_clock(result, started, _dt.now(_tz.utc).isoformat(timespec="seconds"),
+                                              _time.perf_counter() - t0)
+    return result
+
+
+run_local_spread.__doc__ += "\n\n" + (_run_local_spread_core.__doc__ or "")
 
 
 def _initial_of(dom: SimulationDomain, expansions: List[dict]) -> SimulationDomain:
