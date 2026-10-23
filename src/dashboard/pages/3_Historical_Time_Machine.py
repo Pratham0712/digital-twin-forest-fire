@@ -158,6 +158,14 @@ st.caption(f"In {region.name}, detections peak in {peak.idxmax()} across the {df
 st.markdown('<div class="sec-hdr">Animated detection map</div>', unsafe_allow_html=True)
 
 
+def _month_label(ym: str) -> str:
+    """'2023-01' -> 'Jan 2023' (slider label)."""
+    try:
+        return pd.Timestamp(f"{ym}-01").strftime("%b %Y")
+    except (ValueError, TypeError):
+        return str(ym)
+
+
 @st.cache_data(show_spinner=False)
 def build_map(name: str, _df: pd.DataFrame, min_lat, max_lat, min_lon, max_lon, real: bool):
     months = sorted(_df["year_month"].unique())
@@ -173,9 +181,10 @@ def build_map(name: str, _df: pd.DataFrame, min_lat, max_lat, min_lon, max_lon, 
     fig.update_layout(
         map=dict(style="carto-darkmatter", zoom=_zoom_for(reg),
                   center={"lat": (min_lat + max_lat) / 2, "lon": (min_lon + max_lon) / 2}),
-        height=520, margin=dict(l=0, r=0, t=10, b=60), paper_bgcolor="rgba(0,0,0,0)",
+        height=560, margin=dict(l=10, r=10, t=10, b=120), paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Plus Jakarta Sans, sans-serif"),
-        updatemenus=[{"type": "buttons", "showactive": False, "x": 0.0, "y": -0.08, "xanchor": "left",
+        updatemenus=[{"type": "buttons", "showactive": False, "x": 0.0, "y": -0.04, "xanchor": "left", "yanchor": "top",
+                      "direction": "right", "pad": {"t": 8, "r": 10},
                       "bgcolor": "#11151b", "bordercolor": "#303a48", "font": {"color": "#e8edf3"},
                       "buttons": [
                           {"label": "Play", "method": "animate",
@@ -184,10 +193,12 @@ def build_map(name: str, _df: pd.DataFrame, min_lat, max_lat, min_lon, max_lon, 
                           {"label": "Pause", "method": "animate",
                            "args": [[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}]},
                       ]}],
-        sliders=[{"active": 0, "x": 0.1, "len": 0.9, "y": -0.06, "bgcolor": "#11151b", "bordercolor": "#303a48",
-                  "font": {"color": "#8a96a6", "size": 10},
-                  "currentvalue": {"prefix": "Month: ", "font": {"color": "#e8edf3", "size": 13}},
-                  "steps": [{"label": ym, "method": "animate",
+        sliders=[{"active": 0, "x": 0.17, "len": 0.79, "y": -0.04, "yanchor": "top", "xanchor": "left",
+                  "pad": {"t": 34, "b": 10, "l": 6, "r": 6},
+                  "bgcolor": "#11151b", "bordercolor": "#303a48",
+                  "font": {"color": "#c3ccd8", "size": 10},
+                  "currentvalue": {"prefix": "Month: ", "font": {"color": "#e8edf3", "size": 14}, "offset": 14},
+                  "steps": [{"label": _month_label(ym), "method": "animate",
                              "args": [[ym], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}]}
                             for ym in months]}],
     )

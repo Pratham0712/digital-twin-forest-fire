@@ -44,7 +44,6 @@ if st.session_state.get("spread_mode") not in SPREAD_MODES:
     st.session_state["spread_mode"] = SPREAD_MODES[0] if cfg else SPREAD_MODES[1]
 
 render_header(summary, offline, "Fire Spread Simulation", region=twin.region)
-render_study_region_summary(twin)
 
 st.markdown('<div class="sec-hdr">Simulate from</div>', unsafe_allow_html=True)
 mode = st.radio("Source of the risk state to spread from", SPREAD_MODES, horizontal=True,

@@ -675,6 +675,21 @@ def render_applied_scenario_bar(cfg: dict):
                    f"{cfg.get('region')} zone {risk.get('zone_id')} ({risk.get('zone_severity')}) · synthetic scenario weather")
 
 
+def nothing_to_ignite(twin) -> bool:
+    """True when the twin's region has no HIGH/EXTREME alert zone and no active
+    fire detection (observed, or synthetic in demo mode): spread is not simulated."""
+    snap = getattr(twin, "current_snapshot", None)
+    if snap is None:
+        return True
+    if any(a.severity in ("HIGH", "EXTREME") for a in snap.alerts):
+        return False
+    hot = getattr(getattr(twin, "ingestion", None), "last_hotspots", None)
+    if hot is not None and len(hot) > 0:
+        return False
+    g = snap.processed_grid
+    return not ("active_fire_nearby" in g and bool(g["active_fire_nearby"].astype(bool).any()))
+
+
 def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg: float, wind_label: str,
                       setup: dict, wind_schedule_15min=None, scenario: Optional[dict] = None,
                       live: Optional[dict] = None):
@@ -738,7 +753,16 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
                                                         plan["ign"], ran=False)
         log_action("simulation", f"{lm.MODE_NAMES[lmode]} at {f.name}: {st.session_state[status_key]['title']} "
                    "(no ignition, nothing simulated)", twin.region.name)
+    elif (run or redraw) and plan is None and nothing_to_ignite(twin):
+        # No HIGH/EXTREME alert zone and no active fire anywhere in the region: there is
+        # nothing to spread from, so no fire is simulated.
+        st.session_state[res_key] = None
+        st.session_state[status_key] = None
+        st.session_state[f"{kp}_geo_blocked"] = True
+        log_action("simulation", f"Geographic spread at {f.name}: not run - no HIGH/EXTREME alert zones and "
+                   "no active fires in the region", twin.region.name)
     elif run or redraw:
+        st.session_state[f"{kp}_geo_blocked"] = False
         result = _run_simulation(f, cond, setup, plan, seed, wind_speed_ms, wind_from_deg, wind_schedule_15min)
         st.session_state[res_key] = result
         st.session_state[status_key] = (lm.result_status(lmode, live["firms"]["status"], plan["cls"], sev,
@@ -755,6 +779,10 @@ def render_geo_spread(twin, key_prefix: str, wind_speed_ms: float, wind_from_deg
                    + ign_txt, twin.region.name)
     result = st.session_state.get(res_key)
     run_status = st.session_state.get(status_key)
+    if plan is None and nothing_to_ignite(twin):
+        st.markdown('<div class="info-box"><b>No fire to spread.</b> There are no HIGH or EXTREME alert zones and '
+                    'no active fires in this region right now, so the simulation does not start a fire.</div>',
+                    unsafe_allow_html=True)
     if plan is not None:
         shown = run_status or lm.assess(lmode, live["firms"]["status"], plan["cls"], sev, plan["ign"])
         st.markdown(lm.status_html(shown, plan["ign"]["label"]), unsafe_allow_html=True)

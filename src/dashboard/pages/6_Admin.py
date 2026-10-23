@@ -78,9 +78,6 @@ tab_users, tab_history, tab_notify, tab_emerg = st.tabs(["Users", "Stored histor
 with tab_emerg:
     from src.dashboard.ui.alerts_ui import render_alert_history, render_recipient_admin
     st.subheader("Emergency-alert recipients")
-    st.caption("Opt-in only: nothing is sent automatically. Alerts are sent from a completed simulation (Spread "
-               "Simulation → Send Emergency Alert) after a review and an explicit confirmation, only to enabled "
-               "recipients on verified channels.")
     render_recipient_admin()
     st.subheader("Alert history and delivery status")
     render_alert_history()
@@ -89,7 +86,9 @@ with tab_users:
     st.subheader("Accounts")
     users = _users()
     if users:
-        st.dataframe(_ist_table(users)[["username", "role", "created (IST)"]],
+        _udf = _ist_table(users)
+        _udf["email"] = _udf["email"].fillna("—") if "email" in _udf else "—"
+        st.dataframe(_udf[["username", "role", "email", "created (IST)"]],
                       use_container_width=True, hide_index=True)
     else:
         st.info("No users yet.")
@@ -99,20 +98,41 @@ with tab_users:
 
     with col_add:
         st.markdown("**Add a user**")
+        st.caption("Admin accounts are created here only. The sign-in details are emailed to the new user. "
+                   "Leave the password blank to generate a strong one.")
         with st.form("add_user_form", clear_on_submit=True):
             new_username = st.text_input("Username")
-            new_password = st.text_input("Password", type="password")
-            new_role = st.selectbox("Role", ["viewer", "admin"])
-            add_submitted = st.form_submit_button("Create account")
+            new_email = st.text_input("Email (the sign-in details are sent here)")
+            new_role = st.selectbox("Role", ["admin", "viewer"])
+            new_password = st.text_input("Password (optional)", type="password")
+            add_submitted = st.form_submit_button("Create account and email the details")
         if add_submitted:
-            if not new_username or not new_password:
-                st.error("Username and password are both required.")
-            elif db.create_user(new_username.strip(), new_password, new_role):
-                db.log_activity("admin", f"Created {new_role} account '{new_username.strip()}'",
-                                actor=st.session_state.get("auth_user", "admin"))
+            import re
+            import secrets
+            uname, mail = new_username.strip(), new_email.strip()
+            pw = new_password or secrets.token_urlsafe(9)
+            if not re.match(r"^[A-Za-z0-9_.-]{3,30}$", uname):
+                st.error("Username must be 3-30 characters: letters, digits, dot, underscore or hyphen.")
+            elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", mail):
+                st.error("Enter the new user's email address - the sign-in details are sent there.")
+            elif len(pw) < 8:
+                st.error("Password must be at least 8 characters (or leave it blank to generate one).")
+            elif db.create_user(uname, pw, new_role, email=mail):
+                actor = st.session_state.get("auth_user", "admin")
                 _users.clear(); _counts.clear()
-                st.success(f"Created {new_role} account '{new_username.strip()}'.")
-                st.rerun()
+                import os
+                notifier_ = EmailNotifier()
+                with st.spinner("Emailing the sign-in details..."):
+                    sent = notifier_.send_credentials(mail, uname, pw, new_role, os.getenv("APP_URL", "").strip())
+                db.log_activity("admin", f"Created {new_role} account '{uname}'"
+                                + (f" and emailed the sign-in details to {mail}" if sent
+                                   else " (sign-in email not sent)"), actor=actor)
+                if sent:
+                    st.success(f"Created {new_role} account '{uname}' and emailed the sign-in details to {mail}.")
+                else:
+                    st.warning(f"Created {new_role} account '{uname}', but the email could not be sent "
+                               "(SMTP not configured or the send failed). Share these details privately:")
+                    st.code(f"Username: {uname}\nPassword: {pw}", language=None)
             else:
                 st.error("That username already exists.")
 
@@ -136,14 +156,6 @@ with tab_users:
                        "while signed in - sign in as another admin first.)")
 
 with tab_history:
-    counts = _counts()
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Database", db.backend_name())
-    m2.metric("Snapshots", f"{counts['snapshots']:,}")
-    m3.metric("Alert records", f"{counts['alerts_log']:,}")
-    m4.metric("Activity events", f"{counts['activity_log']:,}")
-    m5.metric("Users", f"{counts['users']:,}")
-
     st.subheader("Recent refresh snapshots")
     snaps = _snapshots(30)
     if snaps:
@@ -205,13 +217,3 @@ with tab_notify:
             st.error("Send failed - check the SMTP settings above (host, port, and app password).")
     if not notifier.is_configured:
         st.caption("Configure SMTP above first - the button unlocks once all four variables are set.")
-
-    st.subheader("Automatic data refresh")
-    interval = __import__('config.config', fromlist=['SYSTEM']).SYSTEM.min_refresh_interval_minutes
-    st.success(f"Data refreshes automatically every **{interval} minutes**.")
-
-    with st.expander("Advanced options"):
-        st.markdown(
-            "Refreshes can also run as a separate background process (the scheduler module) "
-            "instead of inside the dashboard."
-        )

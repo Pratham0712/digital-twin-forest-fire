@@ -1,6 +1,10 @@
 [browser]
 gatherUsageStats = false
 
+[client]
+# No Deploy button / developer menu, and the "C" clear-cache shortcut is disabled.
+toolbarMode = "minimal"
+
 [server]
 # Serves src/dashboard/static/ at app/static/ (the Command Center hero image).
 enableStaticServing = true

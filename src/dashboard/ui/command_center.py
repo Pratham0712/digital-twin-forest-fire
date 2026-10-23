@@ -98,8 +98,6 @@ def render_status_strip(twin, summary: dict):
         pills.append(_pill("ok", "SPREAD", "Simulated fire burned out"))
     else:
         pills.append(_pill("data", "SPREAD", "Ready"))
-    pills.append(_pill("data" if feeds["maps"] else "warn", "MAP",
-                       "Google satellite" if feeds["maps"] else "Maps key missing"))
     persist = st.session_state.get("persist_result") or {}
     if persist.get("pending"):
         pills.append(_pill("data", "DATABASE", "Saving snapshot"))
@@ -332,7 +330,7 @@ def render_region_map(twin, height: int = 560):
             + ("Dots = NASA FIRMS VIIRS satellite detections (observed)." if kind == "observed"
                else "Dots = synthetic demo hotspots (not observed)."))
     if feeds["overall"] in ("error", "cached", "not_configured"):
-        note += " Some live data is unavailable; see Data & system status."
+        note += " Some live data is unavailable right now."
     payload = region_payload(twin, markers, kind, hsum, note, key, google_maps_map_id(), height=height)
     with st.container(key="cc_regionmap"):
         render_fire_map(payload, key="cc_region_map")

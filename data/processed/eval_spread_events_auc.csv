@@ -1,0 +1,13 @@
+season,ranking,events,mean_auc,ci95_low,ci95_high
+2025,Distance to burning cells (no physics),369,0.6865,0.6643,0.7084
+2025,"ROS automaton, isotropic",369,0.6879,0.6659,0.7095
+2025,"ROS automaton, observed direction",240,0.6828,0.6597,0.706
+2025,paired: isotropic automaton minus distance,240,0.0014,-0.0008,0.0038
+2025,paired: directed automaton minus distance,240,-0.0001,-0.0055,0.0055
+2025,paired: directed minus isotropic automaton,240,-0.0015,-0.0071,0.0044
+2026,Distance to burning cells (no physics),113,0.6904,0.6467,0.73
+2026,"ROS automaton, isotropic",113,0.6909,0.6475,0.731
+2026,"ROS automaton, observed direction",74,0.6855,0.637,0.7336
+2026,paired: isotropic automaton minus distance,74,-0.0001,-0.0021,0.0017
+2026,paired: directed automaton minus distance,74,-0.0064,-0.011,-0.0023
+2026,paired: directed minus isotropic automaton,74,-0.0063,-0.0114,-0.0018

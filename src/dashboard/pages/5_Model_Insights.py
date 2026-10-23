@@ -22,12 +22,13 @@ from src.data_processing.feature_engineering import DataProcessor
 from src.ml_models.explain import contributions, sigmoid
 from src.ml_models.model_registry import choose_for_region, india_state_metrics
 
-from src.auth.auth_gate import require_login
+from src.auth.auth_gate import require_login, render_user_badge_in_sidebar
 
 set_page("Model Insights")
 require_login()
 
 offline, scenario, region, force_refresh = build_sidebar()
+render_user_badge_in_sidebar()
 twin = ensure_twin(offline, scenario, region, force_refresh)
 snap = twin.current_snapshot
 summary = twin.get_summary()
@@ -100,8 +101,9 @@ if _summary is None:
     st.markdown('''<div class="info-box">Run <code>python scripts/run_evaluation_extras.py</code> to generate
     the lift, precision-recall and baseline tables for the saved Karnataka model.</div>''', unsafe_allow_html=True)
 else:
-    t_lift, t_pr, t_rules, t_seasons, t_cmp, t_spread = st.tabs(
-        ["Lift", "Precision-recall", "Versus simple rules", "Second season", "Comparing regions", "Fire-spread check"])
+    t_lift, t_pr, t_rules, t_seasons, t_cmp, t_spread, t_events, t_unseen = st.tabs(
+        ["Lift", "Precision-recall", "Versus simple rules", "Second season", "Comparing regions", "Fire-spread check",
+         "Spread at 375 m", "Unseen states and calibration"])
 
     with t_lift:
         for _, r in _summary.iterrows():
@@ -181,6 +183,44 @@ else:
                        "simulator is scored on the NEW fire cells detected the next day, against two reference predictors. "
                        "No wind direction or fuel map exists in the archive, so runs use random wind direction and uniform fuel.")
             st.dataframe(_spread.drop(columns=["days_scored"], errors="ignore"), use_container_width=True, hide_index=True)
+
+    with t_events:
+        _ev_auc, _hy = _load("eval_spread_events_auc.csv"), _load("eval_spread_hybrid.csv")
+        if _ev_auc is None:
+            st.markdown('''<div class="info-box">Run <code>python scripts/validate_spread_events.py</code> to test the
+            rate-of-spread automaton against individual fire events at the satellite's own 375 m resolution.</div>''',
+                        unsafe_allow_html=True)
+        else:
+            st.caption("Each row is a ranking of the cells around a real fire event by how likely they are to show NEW "
+                       "detections the next day (ROC-AUC, 0.5 = random, 95% bootstrap interval). Calibration used 2023-24 "
+                       "events only; 2025 and 2026 are held out. The comparison that matters is with plain distance to "
+                       "the burning cells.")
+            st.dataframe(_ev_auc, use_container_width=True, hide_index=True)
+            if _hy is not None:
+                st.markdown("**Does physics add anything to a machine-learning ranker?**")
+                _tab = _hy[(_hy["paired_diff_vs"].isna()) | (_hy["paired_diff_vs"] == "")]
+                _tab = _tab[_tab["events"] == "all events"][["season", "n", "ranking", "mean_auc", "ci95_low", "ci95_high"]]
+                st.dataframe(_tab, use_container_width=True, hide_index=True)
+            st.markdown('''<div class="info-box"><b>Reading this honestly.</b> Next-day growth is ranked about as well by plain
+            distance as by the physical model, by weather, or by a trained ranker: differences are within the
+            intervals. With daily satellite passes, no wind direction, fuel or fine terrain, the spread model is a
+            scenario tool, not a validated forecast.</div>''', unsafe_allow_html=True)
+
+    with t_unseen:
+        _sp, _cal = _load("eval_spatial_holdout.csv"), _load("eval_calibration.csv")
+        if _sp is None:
+            st.markdown('''<div class="info-box">Run <code>python scripts/spatial_holdout.py</code>.</div>''',
+                        unsafe_allow_html=True)
+        else:
+            st.caption("Leave-one-state-out: the pooled model is trained on the OTHER states' 2023-24 seasons and scored "
+                       "on the held-out state in 2025 and 2026. 'Trained incl. this state' is the usual pooled model.")
+            st.dataframe(_sp.groupby(["season", "model"])[["auc_roc", "ap_over_base", "recall_top10pct"]].mean()
+                         .round(3).reset_index(), use_container_width=True, hide_index=True)
+            with st.expander("Per state"):
+                st.dataframe(_sp, use_container_width=True, hide_index=True)
+        if _cal is not None:
+            st.markdown("**Probability calibration** (Brier score and expected calibration error, lower is better)")
+            st.dataframe(_cal, use_container_width=True, hide_index=True)
 
 
 # ── per-zone explainability ────────────────────────────────────────────────── #

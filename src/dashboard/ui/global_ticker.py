@@ -200,14 +200,11 @@ def ticker_items(twin=None) -> Tuple[dict, List[Tuple[str, str, str]]]:
                       f"at {res.focus.name} (T+{res.duration_minutes:.0f} min · {src})"))
     elif st.session_state.get("simulation_config"):
         items.append(("warn", "SPREAD SIMULATION", "scenario applied · ready to run"))
-    else:
-        items.append(("ok", "SPREAD SIMULATION", "idle · no run this session"))
     dot = {"live": "ok", "error": "crit", "not_configured": "crit"}
     for msg in feeds["env_problems"]:
         items.append(("crit", ".ENV", msg))
     items.append((dot.get(feeds["firms_mode"], "warn"), "NASA FIRMS", feed_text("firms", feeds)))
     items.append((dot.get(feeds["weather_mode"], "warn"), "OPENWEATHERMAP", feed_text("weather", feeds)))
-    items.append(maps_item(feeds))
     return feeds, items
 
 

@@ -1,0 +1,33 @@
+state,season,model,fire_rate,auc_roc,avg_precision,ap_over_base,recall_top10pct
+Andhra Pradesh / Telangana,2025,trained incl. this state,0.3851,0.9164,0.8549,2.22,0.2441
+Andhra Pradesh / Telangana,2025,never saw this state,0.3851,0.9156,0.8527,2.21,0.2432
+Andhra Pradesh / Telangana,2026,trained incl. this state,0.321,0.8727,0.7291,2.27,0.2575
+Andhra Pradesh / Telangana,2026,never saw this state,0.321,0.8742,0.7338,2.29,0.2605
+Assam,2025,trained incl. this state,0.2869,0.8969,0.791,2.76,0.3147
+Assam,2025,never saw this state,0.2869,0.8904,0.7786,2.71,0.3109
+Assam,2026,trained incl. this state,0.2666,0.9145,0.7784,2.92,0.3201
+Assam,2026,never saw this state,0.2666,0.9103,0.7726,2.9,0.3186
+Chhattisgarh,2025,trained incl. this state,0.5479,0.8706,0.8912,1.63,0.1787
+Chhattisgarh,2025,never saw this state,0.5479,0.8697,0.8899,1.62,0.1788
+Chhattisgarh,2026,trained incl. this state,0.4879,0.8644,0.8724,1.79,0.201
+Chhattisgarh,2026,never saw this state,0.4879,0.8646,0.8719,1.79,0.2019
+Himachal Pradesh,2025,trained incl. this state,0.2232,0.9069,0.7143,3.2,0.3517
+Himachal Pradesh,2025,never saw this state,0.2232,0.9053,0.703,3.15,0.3523
+Himachal Pradesh,2026,trained incl. this state,0.1596,0.9245,0.69,4.32,0.4676
+Himachal Pradesh,2026,never saw this state,0.1596,0.9226,0.6899,4.32,0.4702
+Madhya Pradesh,2025,trained incl. this state,0.4472,0.861,0.8431,1.89,0.2152
+Madhya Pradesh,2025,never saw this state,0.4472,0.8559,0.8335,1.86,0.2108
+Madhya Pradesh,2026,trained incl. this state,0.2156,0.8332,0.6706,3.11,0.3667
+Madhya Pradesh,2026,never saw this state,0.2156,0.8219,0.6627,3.07,0.3684
+Maharashtra,2025,trained incl. this state,0.5771,0.8248,0.8584,1.49,0.1656
+Maharashtra,2025,never saw this state,0.5771,0.8222,0.8541,1.48,0.1643
+Maharashtra,2026,trained incl. this state,0.5071,0.786,0.7756,1.53,0.1701
+Maharashtra,2026,never saw this state,0.5071,0.7781,0.7654,1.51,0.1707
+Odisha,2025,trained incl. this state,0.4129,0.9132,0.8807,2.13,0.2365
+Odisha,2025,never saw this state,0.4129,0.9124,0.8793,2.13,0.2361
+Odisha,2026,trained incl. this state,0.5355,0.9043,0.9083,1.7,0.183
+Odisha,2026,never saw this state,0.5355,0.9025,0.9051,1.69,0.1826
+Uttarakhand,2025,trained incl. this state,0.3264,0.8855,0.7656,2.35,0.2647
+Uttarakhand,2025,never saw this state,0.3264,0.8821,0.7616,2.33,0.2618
+Uttarakhand,2026,trained incl. this state,0.287,0.9037,0.7491,2.61,0.2943
+Uttarakhand,2026,never saw this state,0.287,0.9025,0.75,2.61,0.2954

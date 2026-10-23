@@ -258,8 +258,9 @@ def add_climatology_training(df: pd.DataFrame, grid: pd.DataFrame,
 
     full = rates(train_mask)
     rest = ~train_mask
-    df.loc[rest, "zone_clim"] = df.loc[rest, "zone_id"].map(full).values
-    df.loc[rest, "nbr_clim"] = df.loc[rest, "zone_id"].map(_smooth_on_grid(full, grid)).values
+    if rest.any():                     # pandas >= 3 rejects assigning an empty str array to a float column
+        df.loc[rest, "zone_clim"] = df.loc[rest, "zone_id"].map(full).astype(float).values
+        df.loc[rest, "nbr_clim"] = df.loc[rest, "zone_id"].map(_smooth_on_grid(full, grid)).astype(float).values
 
     table = grid[["zone_id", "latitude", "longitude"]].copy()
     table["zone_clim"] = table["zone_id"].map(full).fillna(full.mean()).values

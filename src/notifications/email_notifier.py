@@ -40,6 +40,46 @@ class EmailNotifier:
             self.smtp_host and self.smtp_user and self.smtp_password and self.recipients
         )
 
+    @property
+    def can_send_mail(self) -> bool:
+        """SMTP login available (recipients are not needed for a direct message)."""
+        return bool(self.smtp_host and self.smtp_user and self.smtp_password)
+
+    def send_credentials(self, to_email: str, username: str, password: str, role: str,
+                         app_url: str = "") -> bool:
+        """Emails a new account's sign-in details to its owner. Returns True only
+        if the message was sent (never raises)."""
+        if not (self.can_send_mail and to_email):
+            return False
+        sender = os.getenv("SMTP_FROM", "").strip() or self.smtp_user
+        where = f"Sign in at: {app_url}\n" if app_url else ""
+        body = (
+            f"Hello {username},\n\n"
+            f"An {role} account has been created for you on the Forest Fire Digital Twin.\n\n"
+            f"Username: {username}\n"
+            f"Password: {password}\n"
+            f"Role:     {role}\n"
+            f"{where}\n"
+            "Please sign in and keep these details private. Ask your administrator to reset the "
+            "password if you think it has been shared.\n\n"
+            "This is an automated message. Do not reply to this email."
+        )
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = sender
+            msg["To"] = to_email
+            msg["Subject"] = f"[Forest Fire Digital Twin] Your {role} account"
+            msg.attach(MIMEText(body, "plain"))
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=15) as server:
+                server.starttls()
+                server.login(self.smtp_user, self.smtp_password)
+                server.sendmail(sender, [to_email], msg.as_string())
+            logger.info("Sent account details for '%s' to %s.", username, to_email)
+            return True
+        except (smtplib.SMTPException, OSError) as exc:
+            logger.warning("Account e-mail to %s failed (%s).", to_email, exc)
+            return False
+
     def send_new_extreme_alert(self, region_name: str, new_alerts: Iterable) -> bool:
         """new_alerts: iterable of ZoneAlert-like objects (zone_id, latitude,
         longitude, risk_score, reason attributes) that are newly EXTREME

@@ -1,0 +1,5 @@
+season,probabilities,brier,ece,mean_predicted,observed_rate
+2025,raw (class-weighted XGBoost),0.1371,0.0382,0.4726,0.4346
+2025,"isotonic, fitted on 2024",0.1355,0.0207,0.4149,0.4346
+2026,raw (class-weighted XGBoost),0.1302,0.0584,0.3744,0.3159
+2026,"isotonic, fitted on 2024",0.1255,0.0111,0.3216,0.3159

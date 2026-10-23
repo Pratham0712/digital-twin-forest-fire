@@ -263,7 +263,3 @@ else:
                    "Those ignitions are HYPOTHETICAL, not observed fires.")
         render_ca_simulation(twin, key_prefix="wi_ca", allow_force_ignite=False)
 
-st.caption(
-    "This page runs an isolated scenario twin, separate from the Command Center's live/demo "
-    "state; switching pages will not lose your main session."
-)

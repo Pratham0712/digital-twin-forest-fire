@@ -1,0 +1,16 @@
+feature,auc_drop_when_shuffled
+dist,0.114
+ca_iso,0.026
+dist_centroid,0.0157
+dist_prev,0.0072
+doy,0.0068
+dens8,0.0045
+dens3,0.0008
+has_prev,0.0002
+has_dir,0.0001
+log_seeds,-0.0009
+wind,-0.0011
+ca_dir,-0.0026
+cos_align,-0.0049
+bui,-0.0051
+ffmc,-0.0092

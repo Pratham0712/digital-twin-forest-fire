@@ -45,16 +45,13 @@ BRAND_HTML = """
   <div class="lg-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
     stroke-linejoin="round" aria-hidden="true"><path d="M12 3c1 3 4 4.5 4 8.5a4 4 0 0 1-8 0c0-1.6.8-2.7 1.6-3.6.3 1.4 1.2 2.1 1.9 2.1-.6-2.5.5-5 .5-7z"/><path d="M5 20h14"/></svg></div>
   <div class="lg-title">FOREST FIRE DIGITAL TWIN</div>
-  <div class="lg-inst">BMS COLLEGE OF ENGINEERING</div>
   <div class="lg-sub">Secure Research Command Center</div>
 </div>
 """
 
-CREATE_ACCOUNT_HTML = """
-<div class="lg-note"><b style="color:#E8EDF3">Accounts are issued by an administrator.</b><br/>
-This deployment has no self-registration: an admin creates viewer or admin accounts on the
-<b>Admin</b> page, where passwords are stored only as salted PBKDF2 hashes. Ask your project
-administrator for an account, then sign in on the first tab.</div>
+SIGNUP_NOTE_HTML = """
+<div class="lg-note">Sign-up creates a <b style="color:#E8EDF3">viewer</b> account. Admin accounts are
+issued by an administrator, who sends the sign-in details by email.</div>
 """
 
-FOOT_HTML = '<div class="lg-foot">Session-based sign-in · activity is logged · ISE Batch 42</div>'
+FOOT_HTML = '<div class="lg-foot">Session-based sign-in · activity is logged</div>'

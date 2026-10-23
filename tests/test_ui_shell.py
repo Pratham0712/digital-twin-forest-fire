@@ -84,17 +84,18 @@ def test_command_center_layout(app, monkeypatch):
     # demo mode was switched ON explicitly (fixture) -> labelled demo everywhere
     assert app.session_state["_pref_offline_mode"] is True
     assert [t.value for t in app.sidebar.toggle if t.label == "Offline / demo mode"] == [True]
-    assert "DEMO / OFFLINE MODE" in md and "Demo / offline (sidebar toggle ON)" in md
+    assert "DEMO / OFFLINE MODE" in md
+    assert "Data &amp; system status" not in md and 'class="sys-grid"' not in md   # panel removed on request
     assert "Karnataka" in md                                          # region from the twin
     assert "Illustrative concept artwork" in md                       # hero is labelled as artwork
     # hero is a plain <img> (static file, or inline fallback): no st.image, so no fullscreen button
     assert 'class="cc-hero"' in md and ("app/static/dashboard_hero.jpg" in md or "data:image/jpeg;base64" in md)
     assert not app.get("imgs")
     assert 'class="fa' in md and "MODEL PREDICTION" in md and "DEMO DATA" in md
-    assert 'class="cc-strip"' in md and 'class="kpi-row"' in md and 'class="sys-grid"' in md
+    assert 'class="cc-strip"' in md and 'class="kpi-row"' in md and 'Maps key missing' not in md
     assert "OPEN SPREAD SIMULATION  →" in [p.label for p in app.get("page_link")]
     order = [md.index(s) for s in ('class="gt"', 'class="cc-hero"', "Illustrative concept artwork", 'class="cc-strip"',
-                                   'class="fa', 'class="kpi-row"', 'class="ex-card"', 'class="sys-grid"')]
+                                   'class="fa', 'class="kpi-row"', 'class="ex-card"')]
     assert order == sorted(order)
     # switching it OFF -> real-data mode: never DEMO, the actual feed outcome is shown.
     # HTTP is stubbed to fail fast (no network in tests): both feeds UNAVAILABLE.
@@ -114,7 +115,7 @@ def test_command_center_layout(app, monkeypatch):
     md = _md(app)
     tick = next(m.value for m in app.markdown if 'class="gt"' in m.value)
     assert "DEMO / OFFLINE MODE" not in tick and "REAL DATA · API UNAVAILABLE" in tick
-    assert "Real data (sidebar toggle OFF)" in md and "DEMO DATA" not in md
+    assert "DEMO DATA" not in md
 
 
 def test_ticker_on_every_page(app):
@@ -143,7 +144,8 @@ def test_login_screen(env):
     assert [t.label for t in at.tabs] == ["Sign in", "Create account"]
     md = _md(at)
     assert "FOREST FIRE DIGITAL TWIN" in md and "Secure Research Command Center" in md
-    assert "no self-registration" in md                               # no fake sign-up
+    assert "Sign-up creates a" in md and "viewer" in md                # viewer self sign-up
+    assert "BMS COLLEGE" not in md and "Batch 42" not in md
     assert 'class="gt"' not in md                                     # no ticker before sign-in
     at.text_input[0].input("admin")
     at.text_input[1].input("wrong-password")

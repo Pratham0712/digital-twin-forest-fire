@@ -1,0 +1,23 @@
+method,value,f1
+CA duration (h),0.5,0.0
+CA duration (h),1.0,0.0
+CA duration (h),2.0,0.0015362949686339778
+CA duration (h),3.0,0.014954257565095
+CA duration (h),4.0,0.027158098933074682
+CA duration (h),6.0,0.030261214806207182
+CA duration (h),8.0,0.03022287334337145
+CA duration (h),12.0,0.02689508368067505
+CA duration (h),18.0,0.021281323470382477
+CA duration (h),24.0,0.01783288618180939
+dilation radius (cells),1.0,0.030671202548733734
+dilation radius (cells),2.0,0.03364308650384353
+dilation radius (cells),3.0,0.02953643318391977
+dilation radius (cells),4.0,0.025046647566427417
+dilation radius (cells),5.0,0.02075810689810561
+dilation radius (cells),6.0,0.018412629747833028
+dilation radius (cells),7.0,0.016617334547662416
+dilation radius (cells),8.0,0.01484612186795329
+dilation radius (cells),9.0,0.013599867816377604
+dilation radius (cells),10.0,0.012516723720620728
+dilation radius (cells),11.0,0.011751013228362134
+dilation radius (cells),12.0,0.011184165208980319

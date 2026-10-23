@@ -1188,14 +1188,20 @@ function renderRegion(){
     if(!p1||!p3)continue;
     const minx=Math.min(p1[0],p4[0]),maxx=Math.max(p2[0],p3[0]),miny=Math.min(p1[1],p2[1]),maxy=Math.max(p3[1],p4[1]);
     if(maxx<0||minx>CW||maxy<0||miny>CH)continue;cellPx=Math.max(cellPx,maxx-minx);
-    const v=RZ.risk[i],c=riskRGB(v),al=clamp(0.05+0.50*Math.pow(v,1.15),0.05,0.55);   // low risk stays almost clear
+    const v=RZ.risk[i],c=riskRGB(v),al=clamp(0.12+0.52*Math.pow(v,1.1),0.12,0.64);   // low risk stays light, still visible
     ctxG.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${al})`;ctxG.beginPath();ctxG.moveTo(p1[0],p1[1]);ctxG.lineTo(p2[0],p2[1]);
     ctxG.lineTo(p3[0],p3[1]);ctxG.lineTo(p4[0],p4[1]);ctxG.closePath();ctxG.fill();
-    if(RZ.sev[i]>=2){ctxG.strokeStyle=RZ.sev[i]===3?'rgba(255,59,59,0.95)':'rgba(255,179,71,0.85)';ctxG.lineWidth=RZ.sev[i]===3?1.6:1.1;ctxG.stroke();}
   }
-  if(cellPx>=10){ctxG.strokeStyle='rgba(255,255,255,0.07)';ctxG.lineWidth=0.6;ctxG.beginPath();
+  // grid lines: visible at every zoom where a cell is a few pixels wide
+  if(cellPx>=3){ctxG.strokeStyle=cellPx>=12?'rgba(255,255,255,0.42)':'rgba(255,255,255,0.28)';ctxG.lineWidth=cellPx>=12?1.0:0.7;ctxG.beginPath();
     for(let i=0;i<RZ.n;i++){const la=RZ.lat[i],lo=RZ.lon[i],p1=corner(la+h,lo-h),p2=corner(la+h,lo+h),p3=corner(la-h,lo+h);
       if(p1&&p2&&p3){ctxG.moveTo(p1[0],p1[1]);ctxG.lineTo(p2[0],p2[1]);ctxG.lineTo(p3[0],p3[1]);}}ctxG.stroke();}
+  // HIGH / EXTREME zones: bold outline on top of the grid
+  for(let i=0;i<RZ.n;i++){if(RZ.sev[i]<2)continue;const la=RZ.lat[i],lo=RZ.lon[i],p1=corner(la+h,lo-h),p2=corner(la+h,lo+h),p3=corner(la-h,lo+h),p4=corner(la-h,lo-h);
+    if(!p1||!p3)continue;ctxG.strokeStyle=RZ.sev[i]===3?'rgba(255,59,59,1)':'rgba(255,190,80,1)';ctxG.lineWidth=RZ.sev[i]===3?2.6:2.0;
+    ctxG.beginPath();ctxG.moveTo(p1[0],p1[1]);ctxG.lineTo(p2[0],p2[1]);ctxG.lineTo(p3[0],p3[1]);ctxG.lineTo(p4[0],p4[1]);ctxG.closePath();ctxG.stroke();}
+  // region boundary box
+  ctxG.strokeStyle='rgba(143,211,255,0.95)';ctxG.lineWidth=2.2;ctxG.setLineDash([8,5]);ctxG.strokeRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);ctxG.setLineDash([]);
   // zones with active fire nearby (model input), then detections on top
   ctx.globalCompositeOperation='source-over';
   for(let i=0;i<RZ.n;i++){if(!RZ.act[i])continue;const q=regionPx(RZ.lat[i],RZ.lon[i]);if(!q)continue;

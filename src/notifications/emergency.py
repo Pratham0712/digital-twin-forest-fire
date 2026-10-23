@@ -26,7 +26,7 @@ from src.notifications.providers import EmailProvider, SendResult, SmsProvider
 SIM_ONLY = "SIMULATION ONLY — This is a hypothetical forest-fire scenario, not confirmation of an active fire."
 OBS_NOTE = ("Based on NASA FIRMS satellite hotspot detections. Satellite hotspots are observations, not "
             "independently ground-verified fires.")
-SYSTEM_ID = "Forest Fire Digital Twin (BMSCE) - Bandipur / Karnataka"
+SYSTEM_ID = "Forest Fire Digital Twin - Bandipur / Karnataka"
 ADVICE = ["Verify the situation through official forest-department channels before acting.",
           "Do not travel into the area based on this message alone.",
           "Follow instructions from the Karnataka Forest Department and local authorities."]

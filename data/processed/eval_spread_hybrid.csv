@@ -1,0 +1,57 @@
+season,events,n,ranking,mean_auc,ci95_low,ci95_high,paired_diff_vs,diff,diff_lo,diff_hi
+2025,all events,274,Distance to burning cells,0.6626,0.6366,0.688,,,,
+2025,all events,274,Rate-of-spread automaton alone,0.6644,0.6381,0.6899,,,,
+2025,all events,274,S0 distance only,0.6512,0.6238,0.6775,,,,
+2025,all events,274,S1 + fire geometry and observed direction,0.6585,0.631,0.685,,,,
+2025,all events,274,S2 + weather,0.6574,0.6297,0.684,,,,
+2025,all events,274,S3 + rate-of-spread automaton (physics),0.6561,0.6287,0.6828,,,,
+2025,all events,274,Rate-of-spread automaton alone,,,,Distance to burning cells,0.0018,-0.001,0.0046
+2025,all events,274,S0 distance only,,,,Distance to burning cells,-0.0114,-0.0185,-0.0041
+2025,all events,274,S1 + fire geometry and observed direction,,,,Distance to burning cells,-0.0041,-0.0174,0.0095
+2025,all events,274,S2 + weather,,,,Distance to burning cells,-0.0052,-0.0211,0.0105
+2025,all events,274,S3 + rate-of-spread automaton (physics),,,,Distance to burning cells,-0.0064,-0.0204,0.0083
+2025,all events,274,S1 + fire geometry and observed direction,,,,S0 distance only,0.0073,-0.005,0.0196
+2025,all events,274,S2 + weather,,,,S1 + fire geometry and observed direction,-0.0011,-0.0111,0.0085
+2025,all events,274,S3 + rate-of-spread automaton (physics),,,,S2 + weather,-0.0013,-0.008,0.0053
+2025,events with an observed growth direction,165,Distance to burning cells,0.6566,0.6259,0.6871,,,,
+2025,events with an observed growth direction,165,Rate-of-spread automaton alone,0.6586,0.6274,0.6888,,,,
+2025,events with an observed growth direction,165,S0 distance only,0.6505,0.6202,0.6806,,,,
+2025,events with an observed growth direction,165,S1 + fire geometry and observed direction,0.6587,0.6275,0.6898,,,,
+2025,events with an observed growth direction,165,S2 + weather,0.6605,0.6301,0.6916,,,,
+2025,events with an observed growth direction,165,S3 + rate-of-spread automaton (physics),0.6602,0.6303,0.6899,,,,
+2025,events with an observed growth direction,165,Rate-of-spread automaton alone,,,,Distance to burning cells,0.002,-0.0019,0.0058
+2025,events with an observed growth direction,165,S0 distance only,,,,Distance to burning cells,-0.0061,-0.014,0.002
+2025,events with an observed growth direction,165,S1 + fire geometry and observed direction,,,,Distance to burning cells,0.0021,-0.0166,0.0222
+2025,events with an observed growth direction,165,S2 + weather,,,,Distance to burning cells,0.0039,-0.0177,0.0274
+2025,events with an observed growth direction,165,S3 + rate-of-spread automaton (physics),,,,Distance to burning cells,0.0036,-0.0163,0.025
+2025,events with an observed growth direction,165,S1 + fire geometry and observed direction,,,,S0 distance only,0.0082,-0.0084,0.0257
+2025,events with an observed growth direction,165,S2 + weather,,,,S1 + fire geometry and observed direction,0.0018,-0.0107,0.0153
+2025,events with an observed growth direction,165,S3 + rate-of-spread automaton (physics),,,,S2 + weather,-0.0003,-0.0085,0.0075
+2026,all events,116,Distance to burning cells,0.678,0.6316,0.7217,,,,
+2026,all events,116,Rate-of-spread automaton alone,0.6779,0.6314,0.7213,,,,
+2026,all events,116,S0 distance only,0.6749,0.6312,0.7178,,,,
+2026,all events,116,S1 + fire geometry and observed direction,0.6744,0.6282,0.7177,,,,
+2026,all events,116,S2 + weather,0.6789,0.6334,0.7215,,,,
+2026,all events,116,S3 + rate-of-spread automaton (physics),0.6793,0.6345,0.7211,,,,
+2026,all events,116,Rate-of-spread automaton alone,,,,Distance to burning cells,-0.0001,-0.0015,0.0015
+2026,all events,116,S0 distance only,,,,Distance to burning cells,-0.003,-0.0131,0.0073
+2026,all events,116,S1 + fire geometry and observed direction,,,,Distance to burning cells,-0.0035,-0.021,0.0133
+2026,all events,116,S2 + weather,,,,Distance to burning cells,0.0009,-0.0158,0.0186
+2026,all events,116,S3 + rate-of-spread automaton (physics),,,,Distance to burning cells,0.0014,-0.0138,0.017
+2026,all events,116,S1 + fire geometry and observed direction,,,,S0 distance only,-0.0005,-0.0189,0.017
+2026,all events,116,S2 + weather,,,,S1 + fire geometry and observed direction,0.0045,-0.0091,0.0185
+2026,all events,116,S3 + rate-of-spread automaton (physics),,,,S2 + weather,0.0004,-0.0072,0.0087
+2026,events with an observed growth direction,69,Distance to burning cells,0.675,0.6242,0.7249,,,,
+2026,events with an observed growth direction,69,Rate-of-spread automaton alone,0.675,0.6241,0.7247,,,,
+2026,events with an observed growth direction,69,S0 distance only,0.6704,0.6213,0.7193,,,,
+2026,events with an observed growth direction,69,S1 + fire geometry and observed direction,0.6704,0.6208,0.7214,,,,
+2026,events with an observed growth direction,69,S2 + weather,0.688,0.6412,0.7361,,,,
+2026,events with an observed growth direction,69,S3 + rate-of-spread automaton (physics),0.683,0.6362,0.7304,,,,
+2026,events with an observed growth direction,69,Rate-of-spread automaton alone,,,,Distance to burning cells,0.0,-0.0017,0.0019
+2026,events with an observed growth direction,69,S0 distance only,,,,Distance to burning cells,-0.0046,-0.0163,0.0075
+2026,events with an observed growth direction,69,S1 + fire geometry and observed direction,,,,Distance to burning cells,-0.0046,-0.0324,0.0198
+2026,events with an observed growth direction,69,S2 + weather,,,,Distance to burning cells,0.0131,-0.0141,0.0409
+2026,events with an observed growth direction,69,S3 + rate-of-spread automaton (physics),,,,Distance to burning cells,0.0081,-0.0155,0.0322
+2026,events with an observed growth direction,69,S1 + fire geometry and observed direction,,,,S0 distance only,-0.0,-0.0283,0.0248
+2026,events with an observed growth direction,69,S2 + weather,,,,S1 + fire geometry and observed direction,0.0177,-0.0013,0.0377
+2026,events with an observed growth direction,69,S3 + rate-of-spread automaton (physics),,,,S2 + weather,-0.005,-0.0164,0.0079

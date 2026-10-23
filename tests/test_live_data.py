@@ -364,7 +364,8 @@ def test_command_center_uses_google_map_and_what_if_has_no_extra_map(app):
     md = "\n".join(m.value for m in app.markdown)
     assert "Regional risk map · Google satellite" in md
     assert not app.get("plotly_chart") or all("carto" not in str(c.proto) for c in app.get("plotly_chart"))
-    assert "NASA FIRMS" in md and "OPENWEATHERMAP" in md and "GOOGLE MAPS" in md and "RISK MODEL" in md
+    assert "NASA FIRMS" in md and "OPENWEATHERMAP" in md                  # live feeds in the ticker
+    assert "GOOGLE MAPS" not in md and "Data &amp; system status" not in md   # removed on request
     app.switch_page("pages/1_What_If_Simulator.py").run()
     assert not app.exception
     md = "\n".join(m.value for m in app.markdown)
@@ -421,7 +422,7 @@ def test_sidebar_off_means_real_data(monkeypatch, tmp_path):
     assert "NASA FIRMS" in t and "OPENWEATHERMAP" in t and "NOT CONFIGURED" not in t
     assert calls["firms"] >= 1 and calls["owm"] >= 1                      # real requests were attempted
     md = "\n".join(m.value for m in at.markdown)
-    assert "Real data (sidebar toggle OFF)" in md
+    assert "DEMO DATA" not in md
 
 
 def test_sidebar_off_with_failing_firms_is_unavailable_not_demo(monkeypatch, tmp_path):

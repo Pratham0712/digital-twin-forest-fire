@@ -128,9 +128,6 @@ def render_recipient_admin():
     if _role() != "admin":
         st.info("Recipient management is available to administrators only.")
         return
-    ps = provider_status()
-    st.caption(f"Providers: mode **{ps['mode']}** · email: {ps['email']} · SMS: {ps['sms']}. Credentials come from "
-               ".env only (see .env.example); they are never shown here.")
     with st.form("add_recipient", clear_on_submit=True):
         st.markdown("**Register a recipient** (forest-department / monitoring personnel)")
         c1, c2, c3 = st.columns(3)
@@ -212,23 +209,33 @@ def render_alert_history():
 _ALARM_JS = """
 <script>
 (function(){
-  const key='ffdt_alarm_seen', id=%s, mute=%s, test=%s;
-  let seen=[];try{seen=JSON.parse(sessionStorage.getItem(key)||'[]')}catch(e){}
+  // Played through the app page's own AudioContext (window.parent): that document received
+  // the user's click, so the browser allows sound; a fresh iframe context would be blocked.
+  const key='ffdt_alarm_seen', id=%s, mute=%s, test=%s, nonce=%s;
+  const W=window.parent||window;
+  let seen=[];try{seen=JSON.parse(W.sessionStorage.getItem(key)||'[]')}catch(e){}
   if(mute||(!test&&seen.indexOf(id)>=0))return;            // each alert sounds once per browser session
-  try{seen.push(id);sessionStorage.setItem(key,JSON.stringify(seen.slice(-50)))}catch(e){}
-  try{const C=new (window.AudioContext||window.webkitAudioContext)();let t=C.currentTime;
-    for(let k=0;k<3;k++){const o=C.createOscillator(),g=C.createGain();o.type='square';o.frequency.value=k%%2?660:880;
-      g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.18,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+0.35);
-      o.connect(g);g.connect(C.destination);o.start(t);o.stop(t+0.36);t+=0.45;}
-  }catch(e){document.body.innerText='Audio blocked by the browser - click anywhere on the page once to allow sound.';}
+  if(!test){try{seen.push(id);W.sessionStorage.setItem(key,JSON.stringify(seen.slice(-50)))}catch(e){}}
+  try{
+    const AC=W.AudioContext||W.webkitAudioContext;
+    const C=W.__ffdtAudio||(W.__ffdtAudio=new AC());
+    const play=()=>{let t=C.currentTime+0.02;
+      for(let k=0;k<6;k++){const o=C.createOscillator(),g=C.createGain();o.type='square';o.frequency.value=k%%2?660:880;
+        g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.2,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+0.35);
+        o.connect(g);g.connect(C.destination);o.start(t);o.stop(t+0.36);t+=0.45;}
+      W.__ffdtAlarmLast={nonce:nonce,state:C.state,at:Date.now()};};
+    if(C.state==='suspended'){C.resume().then(play).catch(()=>{W.__ffdtAlarmLast={nonce:nonce,state:'blocked'};});}else play();
+  }catch(e){W.__ffdtAlarmLast={nonce:nonce,state:'error',error:String(e)};}
 })();
 </script>"""
 
 
 def play_alarm(alert_key: str, test: bool = False):
+    import time as _time
     mute = bool(st.session_state.get("alarm_muted", False))
-    components.html(_ALARM_JS % (json.dumps(alert_key), "true" if mute else "false", "true" if test else "false"),
-                    height=0)
+    nonce = f"{_time.time():.3f}"          # a new script each call, so a repeated test sounds again
+    components.html(_ALARM_JS % (json.dumps(alert_key), "true" if mute else "false", "true" if test else "false",
+                                 json.dumps(nonce)), height=0)
 
 
 def render_inapp_alerts():
@@ -247,7 +254,12 @@ def render_inapp_alerts():
         with st.expander(f"Emergency alerts{' · ' + str(len(rows)) + ' new' if rows else ''}", expanded=bool(rows)):
             st.toggle("Mute alert sound", key="alarm_muted")
             if st.button("Test alarm (no message is sent)", key="alarm_test"):
-                play_alarm("test", test=True)
+                if st.session_state.get("alarm_muted"):
+                    st.warning("Alert sound is muted - switch off 'Mute alert sound' to hear the test.")
+                else:
+                    play_alarm("test", test=True)
+                    st.toast("Test alarm played. If you heard nothing, check the device volume and that "
+                             "the browser tab is not muted.")
             st.caption("In-app alarm only. Email / SMS cannot force a custom sound on a recipient's phone.")
         for r in rows:
             st.error(f"**{r['alert_type']}** · {r['alert_id']} · {em.ist(r['created_utc'])}\n\n{r['body']}")

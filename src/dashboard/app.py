@@ -28,7 +28,6 @@ from src.dashboard.dashboard_common import (
 )
 from src.dashboard.ui.command_center import (
     render_dashboard_hero, render_explore_cards, render_fire_alert_panel, render_region_map, render_status_strip,
-    render_system_status,
 )
 from src.auth.auth_gate import require_login, render_user_badge_in_sidebar, is_admin
 
@@ -42,7 +41,7 @@ snap = twin.current_snapshot
 summary = twin.get_summary()
 
 # Layout: ticker -> hero -> live status strip -> fire alert -> key metrics ->
-# explore modules -> risk map / alerts -> data & system status.
+# explore modules -> risk map / alerts.
 render_dashboard_hero()
 render_status_strip(twin, summary)
 render_autorefresh_status(offline, scenario, region)
@@ -78,17 +77,9 @@ with col_side:
     render_risk_gauge(summary)
     render_alerts(snap.alerts, summary, limit=8)
 
-st.markdown('<div class="sec-hdr">Data &amp; system status</div>', unsafe_allow_html=True)
-render_system_status(twin, summary, offline)
 if not offline:
     if st.button("Refresh satellite & weather data", key="cc_refresh_live",
                  help="Fetch NASA FIRMS detections and OpenWeatherMap weather for this region now "
                       "(otherwise refreshed automatically at the interval shown above)."):
         ensure_twin(offline, scenario, region, force_refresh=True, trigger="Manual refresh (NASA FIRMS + OpenWeatherMap)")
         st.rerun()
-st.markdown("<br/>", unsafe_allow_html=True)
-st.caption(
-    "Digital Twin Framework for Forest Fire Prediction · BMSCE ISE · Batch 42 · "
-    "Data: NASA FIRMS (VIIRS SNPP), OpenWeatherMap · Canadian FWI System"
-    + ("  ·  offline / demo mode" if offline else "")
-)

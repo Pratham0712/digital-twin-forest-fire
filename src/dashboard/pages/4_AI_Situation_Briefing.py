@@ -27,12 +27,13 @@ from src.dashboard.dashboard_common import (
     SEV_COLOR, SYSTEM, DATA_RAW_DIR, log_action,
 )
 
-from src.auth.auth_gate import require_login
+from src.auth.auth_gate import require_login, render_user_badge_in_sidebar
 
 set_page("AI Situation Briefing")
 require_login()
 
 offline, scenario, region, force_refresh = build_sidebar()
+render_user_badge_in_sidebar()
 twin = ensure_twin(offline, scenario, region, force_refresh)
 snap = twin.current_snapshot
 summary = twin.get_summary()

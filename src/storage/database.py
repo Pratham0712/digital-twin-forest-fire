@@ -97,7 +97,24 @@ users = Table(
     Column("salt", String(64), nullable=False),
     Column("role", String(16), nullable=False),
     Column("created_utc", String(40), nullable=False),
+    Column("email", String(160)),
 )
+
+# Signed-in browser sessions: lets a page refresh restore the login, and expires
+# a session after SESSION_IDLE_SECONDS without user activity. Only a SHA-256 of
+# the token is stored, so a database leak does not expose live session tokens.
+sessions = Table(
+    "sessions", metadata,
+    Column("token_hash", String(64), primary_key=True),
+    Column("username", String(80), nullable=False),
+    Column("role", String(16), nullable=False),
+    Column("created_utc", String(40), nullable=False),
+    Column("last_seen_utc", String(40), nullable=False),
+    Column("theme", String(10), nullable=False, server_default="dark"),
+    Index("idx_sessions_user", "username"),
+)
+
+SESSION_IDLE_SECONDS = 10 * 60
 
 activity_log = Table(
     "activity_log", metadata,
@@ -115,7 +132,11 @@ _ENGINES: dict = {}
 
 # Set when the configured remote database cannot be reached: the app then keeps
 # working on the local SQLite file instead of crashing, and says so on screen.
-_FALLBACK: dict = {"reason": None}
+_FALLBACK: dict = {"reason": None, "since": 0.0}
+# How long the app stays on the local fallback before trying the remote database
+# again, so a short outage (or a provider waking up) never leaves the deployment
+# writing to the temporary local file for good.
+FALLBACK_RETRY_SECONDS = 120
 
 
 def _configured_url() -> str:
@@ -123,6 +144,8 @@ def _configured_url() -> str:
 
 
 def database_url() -> str:
+    if _FALLBACK["reason"] and time.monotonic() - _FALLBACK["since"] >= FALLBACK_RETRY_SECONDS:
+        reset_fallback()                         # retry the remote database
     if _FALLBACK["reason"]:
         return f"sqlite:///{DB_PATH}"
     return _configured_url()
@@ -136,6 +159,12 @@ def fallback_reason() -> Optional[str]:
 def reset_fallback():
     """Forget a previous failure so the next init_db() tries the remote database again."""
     _FALLBACK["reason"] = None
+    _FALLBACK["since"] = 0.0
+
+
+def is_persistent() -> bool:
+    """False when the app writes to the local SQLite file (wiped on a Streamlit Cloud restart)."""
+    return not database_url().startswith("sqlite")
 
 
 def backend_name() -> str:
@@ -213,6 +242,7 @@ def init_db():
         return
     try:
         metadata.create_all(get_engine(), checkfirst=True)
+        _migrate(get_engine())
     except (OperationalError, InterfaceError) as exc:
         if url.startswith("sqlite"):
             raise
@@ -220,11 +250,24 @@ def init_db():
         # off, bad credentials...): carry on with the local SQLite file.
         first_line = str(getattr(exc, "orig", exc)).splitlines()[0][:200]
         _FALLBACK["reason"] = first_line
+        _FALLBACK["since"] = time.monotonic()
         logger.warning("Database %s unreachable (%s) - using local SQLite instead", url.split("@")[-1], first_line)
         url = database_url()
         metadata.create_all(get_engine(), checkfirst=True)
+        _migrate(get_engine())
     _INITIALISED.add(url)
     logger.info("Database initialised (%s)", backend_name())
+
+
+def _migrate(engine: Engine) -> None:
+    """Adds columns introduced after a database was first created (create_all
+    only creates missing TABLES, never missing columns)."""
+    from sqlalchemy import inspect, text
+    cols = {c["name"] for c in inspect(engine).get_columns("users")}
+    if "email" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(160)"))
+        logger.info("Database migrated: users.email column added")
 
 
 def _now() -> str:
@@ -237,12 +280,29 @@ def _rows(result) -> list:
 
 # ── activity log ────────────────────────────────────────────────────────────
 
+# Every activity-log event is also printed to the terminal (stdout) running the
+# app - visible in the console locally and in "Manage app -> Logs" on Streamlit
+# Cloud. print() (not logging) so it shows whatever logging level Streamlit sets.
+def _print_activity(values: dict) -> None:
+    try:
+        from src.utils.timezone import format_ist
+        ts = format_ist(values["timestamp_utc"], "seconds")
+    except Exception:
+        ts = values["timestamp_utc"]
+    region = f" [{values['region_name']}]" if values.get("region_name") else ""
+    try:
+        print(f"[ACTIVITY] {ts} | {values['actor']:<12} | {values['event_type']:<14} |{region} "
+              f"{values.get('detail') or ''}", flush=True)
+    except Exception:  # pragma: no cover - a closed console must never break logging
+        pass
+
 def log_activity(event_type: str, detail: str = "", actor: str = "system",
                  region_name: Optional[str] = None) -> None:
     """Records one user/system action. Never raises - an activity-log write
     failing must not break the refresh or the page that triggered it."""
     values = dict(timestamp_utc=_now(), event_type=event_type, actor=actor or "system",
                   region_name=region_name, detail=detail)
+    _print_activity(values)
 
     def _write():
         try:
@@ -261,10 +321,12 @@ def log_activity(event_type: str, detail: str = "", actor: str = "system",
 
 
 def get_activity(limit: int = 200, event_types: Optional[Iterable[str]] = None,
-                 since_id: Optional[int] = None) -> list:
+                 since_id: Optional[int] = None, actors: Optional[Iterable[str]] = None) -> list:
     q = select(activity_log).order_by(activity_log.c.id.desc()).limit(limit)
     if event_types:
         q = q.where(activity_log.c.event_type.in_(list(event_types)))
+    if actors:
+        q = q.where(activity_log.c.actor.in_(list(actors)))
     if since_id is not None:
         q = q.where(activity_log.c.id > since_id)
     with get_connection() as conn:
@@ -275,6 +337,13 @@ def get_activity_event_types() -> list:
     with get_connection() as conn:
         return [r[0] for r in conn.execute(
             select(activity_log.c.event_type).distinct().order_by(activity_log.c.event_type))]
+
+
+def get_activity_actors() -> list:
+    """Every user name that appears in the activity log (for the user filter)."""
+    with get_connection() as conn:
+        return [r[0] for r in conn.execute(
+            select(activity_log.c.actor).distinct().order_by(activity_log.c.actor))]
 
 
 def get_table_counts() -> dict:
@@ -366,7 +435,7 @@ def _hash_password(password: str, salt: Optional[str] = None) -> tuple:
     return digest, salt
 
 
-def create_user(username: str, password: str, role: str = "viewer") -> bool:
+def create_user(username: str, password: str, role: str = "viewer", email: Optional[str] = None) -> bool:
     """Returns True on success, False if the username already exists."""
     if role not in ("admin", "viewer"):
         raise ValueError("role must be 'admin' or 'viewer'")
@@ -375,7 +444,7 @@ def create_user(username: str, password: str, role: str = "viewer") -> bool:
         with get_connection() as conn:
             conn.execute(insert(users).values(
                 username=username, password_hash=password_hash, salt=salt,
-                role=role, created_utc=_now()))
+                role=role, created_utc=_now(), email=(email or None)))
         return True
     except IntegrityError:
         return False
@@ -395,12 +464,13 @@ def verify_user(username: str, password: str) -> Optional[str]:
 
 def list_users():
     with get_connection() as conn:
-        return _rows(conn.execute(select(users.c.id, users.c.username, users.c.role,
+        return _rows(conn.execute(select(users.c.id, users.c.username, users.c.role, users.c.email,
                                          users.c.created_utc).order_by(users.c.id)))
 
 
 def delete_user(username: str) -> bool:
     with get_connection() as conn:
+        conn.execute(delete(sessions).where(sessions.c.username == username))
         return conn.execute(delete(users).where(users.c.username == username)).rowcount > 0
 
 
@@ -410,6 +480,72 @@ def set_user_role(username: str, role: str) -> bool:
     with get_connection() as conn:
         return conn.execute(update(users).where(users.c.username == username)
                             .values(role=role)).rowcount > 0
+
+
+# ── browser sessions ────────────────────────────────────────────────────────
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _age_seconds(iso: str) -> float:
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds()
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def create_session(username: str, role: str, theme: str = "dark") -> str:
+    """New signed-in session; returns the opaque token kept in the browser cookie."""
+    token = secrets.token_urlsafe(32)
+    now = _now()
+    with get_connection() as conn:
+        conn.execute(insert(sessions).values(token_hash=_token_hash(token), username=username, role=role,
+                                             created_utc=now, last_seen_utc=now, theme=theme))
+    return token
+
+
+def get_session(token: str, max_idle_s: int = SESSION_IDLE_SECONDS) -> Optional[dict]:
+    """The session for this token if it exists, its user still exists and it was
+    active within max_idle_s; expired or orphaned sessions are deleted."""
+    if not token:
+        return None
+    th = _token_hash(token)
+    with get_connection() as conn:
+        row = conn.execute(select(sessions).where(sessions.c.token_hash == th)).first()
+        if row is None:
+            return None
+        row = dict(row._mapping)
+        user = conn.execute(select(users.c.role).where(users.c.username == row["username"])).first()
+        if user is None or _age_seconds(row["last_seen_utc"]) > max_idle_s:
+            conn.execute(delete(sessions).where(sessions.c.token_hash == th))
+            return None
+        row["role"] = user.role                 # a role change by an admin applies on restore
+    return row
+
+
+def touch_session(token: str, theme: Optional[str] = None) -> None:
+    """Marks the session active now (and optionally stores the theme)."""
+    if not token:
+        return
+    values = {"last_seen_utc": _now()}
+    if theme in ("dark", "light"):
+        values["theme"] = theme
+    try:
+        with get_connection() as conn:
+            conn.execute(update(sessions).where(sessions.c.token_hash == _token_hash(token)).values(**values))
+    except Exception as exc:  # pragma: no cover - a failed touch must not break the page
+        logger.warning("session touch failed: %s", exc)
+
+
+def delete_session(token: str) -> None:
+    if not token:
+        return
+    try:
+        with get_connection() as conn:
+            conn.execute(delete(sessions).where(sessions.c.token_hash == _token_hash(token)))
+    except Exception as exc:  # pragma: no cover
+        logger.warning("session delete failed: %s", exc)
 
 
 def ensure_default_admin():

@@ -58,10 +58,23 @@ XGBoost AUC-ROC 0.816 (average precision 0.204), Random Forest 0.824 (0.201). Th
 the 2025 hold-out (0.870), so the 2025 figure should not be read as a guarantee. The top 10% of
 zone-days by risk still capture 41.6% of fires (4.2x random).
 
-The fire-spread simulator has not been shown to beat a naive baseline. In a next-day back-test
-(`scripts/validate_spread.py`, results in `data/processed/eval_spread_validation.csv`) it clearly beats
-random cells, but "spread to every neighbouring cell" scores about the same F1 (2025: 0.168 vs 0.176).
-Treat the spread output as a scenario illustration, not a validated forecast.
+### What the evaluation shows, including what did not work
+
+* **Transfer to unseen states.** Training the pooled model on seven states and scoring the eighth (2025 / 2026
+  held out in time as well): mean AUC 0.882 / 0.872, against 0.884 / 0.875 when the state is in the training
+  data (`scripts/spatial_holdout.py`, `data/processed/eval_spatial_holdout.csv`).
+* **Calibration.** Class-weighted probabilities over-predict; an isotonic map fitted on 2024 cuts the expected
+  calibration error from 0.038 to 0.021 (2025) and 0.058 to 0.011 (2026) (`eval_calibration.csv`).
+* **Spread at 375 m, event by event** (`scripts/validate_spread_events.py`, `scripts/validate_spread_hybrid.py`).
+  For ~370 (2025) and ~110 (2026) real fire events, cells around the fire are ranked by how likely they are to
+  show NEW detections the next day. Plain distance to the burning cells scores AUC 0.687 / 0.690; the rate-of-spread
+  automaton 0.688 / 0.691; the automaton with the wind direction read off the fire's own growth 0.683 / 0.686.
+  Gradient-boosted rankers given fire geometry, weather, or the automaton's arrival times land within about
+  0.01 AUC of distance, inside the confidence intervals. With daily satellite passes, no wind direction, fuel
+  or fine terrain, next-day growth beyond proximity is not recoverable. The spread simulator is a scenario
+  tool, not a validated forecast.
+* **Coarse-grid back-test** (`scripts/validate_spread.py`): the older automaton beats random cells but not the
+  "every neighbour" rule (2025 F1 0.168 vs 0.176).
 
 Beyond the core prediction pipeline, the system also:
 - **Persists every refresh** (snapshots, alerts, users, activity) to
@@ -413,6 +426,14 @@ main.py                                Single entry point, runs the full pipelin
 ## Deployment
 
 Deployed on Streamlit Community Cloud: [add your live URL here once deployed]
+
+- Main file: `src/dashboard/app.py`, branch `pp_branch`, Python 3.12. Every push to the branch redeploys automatically.
+- Secrets: the keys from `.env.example` at the top level (no `[section]` headers).
+- **Persistent database:** set `DATABASE_URL` to a hosted MySQL (for example a free TiDB Cloud Starter
+  cluster, port 4000) and `DATABASE_SSL_CA = "/etc/ssl/certs/ca-certificates.crt"`. Without it the app uses a
+  local SQLite file that Streamlit Cloud wipes on every restart. If the database is briefly unreachable the
+  app falls back to SQLite and retries the remote database every 2 minutes.
+- `APP_URL` (optional): the app's public URL, included in the sign-in e-mails sent to new admins.
 
 ## License
 

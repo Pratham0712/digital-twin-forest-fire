@@ -14,11 +14,14 @@ import pandas as pd
 import streamlit as st
 
 from src.dashboard.dashboard_common import set_page, build_sidebar
-from src.auth.auth_gate import require_login, render_user_badge_in_sidebar
+from src.auth.auth_gate import require_login, render_user_badge_in_sidebar, is_admin
 from src.storage import database as db
 
 set_page("Activity Log")
 require_login()
+if not is_admin():
+    st.warning("The Activity Log is available to administrators only.")
+    st.stop()
 build_sidebar()
 render_user_badge_in_sidebar()
 
@@ -32,6 +35,7 @@ EVENT_LABELS = {
     "report": "Report",
     "login": "Sign in",
     "login_failed": "Failed sign-in",
+    "signup": "Sign-up",
     "logout": "Sign out",
     "admin": "Admin",
     "error": "Error",
@@ -52,13 +56,24 @@ if "activity_filter" not in st.session_state:
     st.session_state["activity_filter"] = []
 if "activity_limit" not in st.session_state:
     st.session_state["activity_limit"] = 100
+if "activity_users" not in st.session_state:
+    st.session_state["activity_users"] = []
 
-c1, c2 = st.columns([3, 1])
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _actors():
+    return db.get_activity_actors()
+
+
+c1, c2, c3 = st.columns([2, 2, 1])
 with c1:
-    st.multiselect("Show only", options=list(EVENT_LABELS.keys()),
+    st.multiselect("Event type", options=list(EVENT_LABELS.keys()),
                    format_func=lambda k: EVENT_LABELS.get(k, k), key="activity_filter",
                    placeholder="All events")
 with c2:
+    st.multiselect("User", options=sorted(set(_actors()) | set(st.session_state["activity_users"])),
+                   key="activity_users", placeholder="All users")
+with c3:
     st.selectbox("Rows", [50, 100, 250, 500], key="activity_limit")
 
 
@@ -70,7 +85,8 @@ def _to_local(ts: pd.Series) -> pd.Series:
 @st.fragment(run_every=timedelta(seconds=10))
 def live_feed():
     # One query per poll; the filter and row limit are applied in memory.
-    fetched = db.get_activity(limit=max(500, st.session_state["activity_limit"]))
+    users = st.session_state["activity_users"]
+    fetched = db.get_activity(limit=max(500, st.session_state["activity_limit"]), actors=users or None)
     recent = pd.DataFrame(fetched)
     wanted = st.session_state["activity_filter"]
     rows = [r for r in fetched if not wanted or r["event_type"] in wanted][:st.session_state["activity_limit"]]
@@ -112,7 +128,7 @@ def live_feed():
             "Details": st.column_config.TextColumn(width="large"),
         },
     )
-    st.caption(f"Stored in {db.backend_name()} · updates every 10 seconds")
+    st.caption("Updates every 10 seconds · every event is also printed to the app's terminal log")
 
 
 live_feed()

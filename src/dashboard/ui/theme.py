@@ -100,6 +100,9 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, input:focus-v
 [data-testid="stSidebarNav"] a:hover span, [data-testid="stSidebarNav"] a:hover span p, [data-testid="stSidebarNav"] li:first-child a:hover::after { color: #ffffff !important; }
 """ + _active_rules(f'{_NAV} a[aria-current="page"]') + """
 
+.role-pill { background: rgba(255,107,53,.14); color: #ff9a3c; border: 1px solid rgba(255,107,53,.35);
+    padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
 /* ── buttons / page links: fire accent, no blue / pink ── */
 .stButton > button:hover { border-color: var(--fire); box-shadow: 0 6px 18px rgba(255,122,24,.18); }
 .stButton > button[kind="primary"] { background: linear-gradient(135deg, #FF7A18, #FF9A3C); color: #170b04; }
@@ -301,5 +304,102 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, input:focus-v
     .fa, .fa .pulse::after, .gt-tag .dot, .cc-pill .gt-dot, .kpi, .cc-hero,
     [class*="st-key-cc_explore_"] { animation: none !important; }
 }
+</style>
+"""
+
+
+# ── light theme (sky blue), injected by auth_gate.require_login when chosen ──
+# Overrides the dark tokens and the dark surfaces of the shared components.
+# Map tiles and satellite imagery keep their own colours.
+LIGHT_THEME_CSS = """
+<style>
+:root {
+    --bg: #DDEFFC; --surface: #F3F9FF; --surface-2: #E6F3FD; --border: #A8CDEB; --border-2: #8DBDE3;
+    --text: #0E2A47; --muted: #47637F; --accent: #E2620E; --fire: #E2620E;
+}
+.stApp { background: linear-gradient(180deg, #E4F3FE 0%, #CFE8FA 100%) !important; color: var(--text) !important; }
+[data-testid="stHeader"] { background: transparent !important; }
+.block-container, .stMarkdown, .stMarkdown p, .stMarkdown li, .stCaption, [data-testid="stCaptionContainer"],
+label, [data-testid="stWidgetLabel"] p, h1, h2, h3, h4, h5, h6, [data-testid="stMetricValue"],
+[data-testid="stMetricLabel"] p, [data-testid="stText"], .stRadio label p, .stCheckbox label p { color: var(--text) !important; }
+[data-testid="stCaptionContainer"], .stCaption, small { color: var(--muted) !important; }
+
+/* sidebar */
+[data-testid="stSidebar"] { background: #CDE6F9 !important; border-right: 1px solid var(--border) !important; }
+[data-testid="stSidebar"] * { color: var(--text); }
+[data-testid="stSidebarNav"] a { background: #EAF5FE !important; border: 1px solid #B6D7F0 !important; }
+[data-testid="stSidebarNav"] a span, [data-testid="stSidebarNav"] a span p { color: #17385A !important; }
+[data-testid="stSidebarNav"] a::before { background: #47637F !important; }
+[data-testid="stSidebarNav"] a:hover { background: #F6FBFF !important; }
+[data-testid="stSidebarNav"] a[aria-current="page"] span, [data-testid="stSidebarNav"] a[aria-current="page"] span p { color: #ffffff !important; }
+
+/* inputs and widgets */
+[data-baseweb="input"], [data-baseweb="input"] > div, [data-baseweb="select"] > div, [data-baseweb="textarea"],
+textarea, input, [data-baseweb="base-input"] {
+    background: #FFFFFF !important; color: var(--text) !important; border-color: var(--border) !important; }
+[data-baseweb="select"] span, [data-baseweb="tag"] span { color: var(--text) !important; }
+[data-baseweb="popover"] ul, [data-baseweb="menu"] { background: #FFFFFF !important; }
+[data-baseweb="popover"] li { color: var(--text) !important; }
+.stButton > button, [data-testid="stFormSubmitButton"] button, [data-testid="stDownloadButton"] button {
+    background: #F3F9FF !important; color: var(--text) !important; border: 1px solid var(--border) !important; }
+.stButton > button[kind="primary"], [data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"] {
+    background: linear-gradient(135deg, #FF8A2A, #FFA24D) !important; color: #2A1300 !important; border: none !important; }
+[data-testid="stExpander"] details, [data-testid="stExpander"] summary {
+    background: var(--surface) !important; border-color: var(--border) !important; color: var(--text) !important; }
+[data-testid="stExpander"] summary p, [data-testid="stExpander"] summary span { color: var(--text) !important; }
+.stTabs [data-baseweb="tab-list"] { border-bottom-color: var(--border) !important; }
+.stTabs [data-baseweb="tab"] p { color: var(--muted) !important; }
+.stTabs [aria-selected="true"] p { color: var(--text) !important; }
+[data-testid="stMetric"], [data-testid="stDataFrame"], [data-testid="stTable"] {
+    background: var(--surface) !important; border-radius: 10px; }
+[data-testid="stForm"] { border-color: var(--border) !important; background: rgba(243,249,255,0.6) !important; }
+[data-testid="stAlert"] { color: var(--text) !important; }
+hr { border-color: var(--border) !important; }
+
+/* dashboard components */
+.hero, .kpi, .alert-card, .briefing-card, .info-box, .nav-card, .legend, .scenario-banner, .fa, .ex-card,
+[class*="st-key-cc_explore_"], .lv-card, .lm-card, .lm-status, .lm-chip, .sys-item, .cc-pill, .cc-hero-note {
+    background: var(--surface) !important; border-color: var(--border) !important; color: var(--text) !important;
+    box-shadow: 0 4px 16px rgba(30,90,140,0.10) !important; }
+.hero h1, .hero .sub, .hero .eyebrow, .kpi .val, .kpi .lbl, .kpi .ctx, .fa h3, .fa .meta, .fa .kicker, .fa .stat .l,
+.fa .stat .n, .ex-card h4, .ex-card p, .ex-card .idx, .lv-card, .lv-card .l, .lm-desc, .lm-title, .lm-msg, .lm-note,
+.sec-hdr, .cc-pill, .cc-pill b, .info-box b, .alert-card *, .briefing-card * { color: var(--text) !important; }
+.hero .sub, .kpi .lbl, .kpi .ctx, .fa .meta, .ex-card p, .lm-desc { color: var(--muted) !important; }
+.sec-hdr { border-color: var(--border) !important; }
+.lm-cmp th, .lm-cmp td { color: var(--text) !important; border-color: var(--border) !important; }
+
+/* status ticker */
+.gt { background:
+        linear-gradient(100deg, rgba(240,248,255,0.96) 0%, rgba(228,242,253,0.96) 100%) padding-box,
+        linear-gradient(90deg, rgba(77,163,255,0.85), rgba(155,123,255,0.75) 55%, rgba(232,108,255,0.80)) border-box !important;
+      box-shadow: 0 6px 18px rgba(30,90,140,0.12) !important; }
+.gt::before { opacity: 0.25; }
+.gt-item b { color: #17385A !important; }
+.gt-item .v, .gt-sep { color: #33506D !important; }
+.gt-item, .gt-item *, .gt-view { opacity: 1 !important; }
+.gt-tag.demo { background: #FFE9C7 !important; color: #8A4B00 !important; }
+.gt-tag.live { background: #D4F5E4 !important; color: #0B6B3A !important; }
+
+/* button labels, alerts, charts, dropdown arrow */
+.stButton > button p, .stButton > button span, [data-testid="stFormSubmitButton"] button p,
+[data-testid="stDownloadButton"] button p, [data-testid="stPageLink"] a p { color: var(--text) !important; }
+.stButton > button[kind="primary"] p { color: #2A1300 !important; }
+[data-testid="stAlert"] p, [data-testid="stAlert"] div { color: #12324F !important; }
+.js-plotly-plot .main-svg .xtick text, .js-plotly-plot .main-svg .ytick text, .js-plotly-plot .main-svg .legendtext,
+.js-plotly-plot .main-svg .g-xtitle text, .js-plotly-plot .main-svg .g-ytitle text,
+.js-plotly-plot .main-svg .slider-label, .js-plotly-plot .main-svg .slider-group text,
+.js-plotly-plot .main-svg .updatemenu-item-text { fill: #23466A !important; }
+[data-baseweb="select"] > div > div { background: transparent !important; }
+[data-testid="stSelectbox"] div:has(> input), [data-testid="stMultiSelect"] div:has(> input) {
+    background-color: #FFFFFF !important; border-color: var(--border) !important; }
+[data-testid="stSelectbox"] svg, [data-testid="stMultiSelect"] svg { color: var(--text) !important; fill: var(--text) !important; }
+[data-baseweb="select"] svg { fill: var(--text) !important; color: var(--text) !important; }
+[data-testid="stTooltipIcon"] svg, [data-testid="stTooltipHoverTarget"] svg { color: var(--muted) !important; }
+.kpi .val { color: #0E2A47 !important; }
+.fa .chip { color: #17385A !important; border-color: #8DBDE3 !important; background: #E6F3FD !important; }
+.fa .chip.demo { color: #8A4B00 !important; border-color: #E8B04C !important; background: #FFF3DC !important; }
+.js-plotly-plot .updatemenu-item-rect { fill: #F3F9FF !important; stroke: #8DBDE3 !important; }
+.js-plotly-plot .slider-rail-rect { fill: #A8CDEB !important; }
+.role-pill { background: rgba(226,98,14,0.12) !important; color: #B4500C !important; border-color: rgba(226,98,14,0.35) !important; }
 </style>
 """

@@ -1,0 +1,13 @@
+season,method,events,precision,recall,f1
+2025,"CA (isotropic), global duration",369,0.0142,0.1191,0.0254
+2025,"Dilation, global radius",369,0.0155,0.1783,0.0286
+2025,"CA (observed direction), global duration",240,0.0138,0.1935,0.0258
+2025,CA (observed direction + yesterday-fitted duration),175,0.0089,0.3983,0.0173
+2025,"CA (isotropic), yesterday-fitted duration",185,0.0098,0.3492,0.0191
+2025,"Dilation, yesterday-fitted radius",232,0.0079,0.3933,0.0155
+2026,"CA (isotropic), global duration",113,0.0212,0.0139,0.0168
+2026,"Dilation, global radius",113,0.0167,0.1579,0.0303
+2026,"CA (observed direction), global duration",74,0.0266,0.0611,0.0371
+2026,"Dilation, yesterday-fitted radius",75,0.006,0.2569,0.0117
+2026,CA (observed direction + yesterday-fitted duration),41,0.0186,0.2798,0.0349
+2026,"CA (isotropic), yesterday-fitted duration",42,0.0223,0.2006,0.0401

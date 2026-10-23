@@ -321,6 +321,14 @@ def build_sidebar(show_scenario: bool = False, show_offline: bool = True):
             help="ON: synthetic demo data. OFF: real NASA FIRMS and OpenWeatherMap data "
                  "(keys from .env or Streamlit Secrets); a failing API is reported, never replaced by demo data.")
     offline = is_demo_mode()
+    # Theme: dark (default) or light sky-blue; kept for the session and across refreshes.
+    st.session_state["theme_toggle"] = st.session_state.get("theme", "dark") == "light"
+
+    def _on_theme():
+        from src.auth.auth_gate import set_theme
+        set_theme("light" if st.session_state["theme_toggle"] else "dark")
+    st.sidebar.toggle("Light theme", key="theme_toggle", on_change=_on_theme,
+                      help="Switch between the dark theme and a light sky-blue theme.")
 
     scenario = st.session_state.get("scenario") if not show_scenario else None
     if show_scenario and offline:
@@ -570,6 +578,7 @@ def render_autorefresh_status(offline: bool, scenario: dict, region):
         if due:
             ensure_twin(offline, scenario, region, force_refresh=True,
                         trigger="Scheduled auto-refresh")
+            st.session_state["_auto_rerun"] = True       # not user activity (session timeout)
             st.rerun()
 
     _watcher()
@@ -577,6 +586,8 @@ def render_autorefresh_status(offline: bool, scenario: dict, region):
     last_ts = st.session_state.get("_last_refresh_ts") or time.time()
     now = time.time()
     remaining = max(0, int(SYSTEM.min_refresh_interval_minutes * 60 - (now - last_ts)))
+    light = st.session_state.get("theme") == "light"
+    cd_txt, cd_val = ("#47637F", "#0E2A47") if light else ("#8a96a6", "#e8edf3")
     # A plain st.caption would only visually update whenever Streamlit
     # happens to rerun (i.e. once per interval) - not a smooth countdown.
     # This renders a tiny client-side timer instead, so the number
@@ -584,12 +595,13 @@ def render_autorefresh_status(offline: bool, scenario: dict, region):
     components.html(
         f"""
         <div style="font-family:'Plus Jakarta Sans','Segoe UI',sans-serif;font-size:13px;
-                    color:#8a96a6;display:flex;align-items:center;gap:8px;
+                    color:{cd_txt};display:flex;align-items:center;gap:8px;
                     margin-top:2px;">
           <span style="width:8px;height:8px;border-radius:50%;
                        background:#34d399;display:inline-block;"></span>
           <span>Next automatic update in
-            <b id="dt-cd" style="color:#e8edf3;font-family:'JetBrains Mono',monospace;"></b></span>
+            <b id="dt-cd" style="color:{cd_val};
+               font-family:'JetBrains Mono',monospace;"></b></span>
         </div>
         <script>
           let remaining = {remaining};
@@ -741,8 +753,7 @@ def render_header(summary: dict, offline: bool, subtitle: str = None, region=Non
     <div class="hero">
       <div class="eyebrow">Forest Fire Digital Twin</div>
       <h1>{title}<span class="badge {badge_cls}">{badge_txt}</span></h1>
-      <div class="sub">{region.name} &nbsp;·&nbsp; Last refreshed {ts}
-        &nbsp;·&nbsp; BMS College of Engineering · ISE Batch 42</div>
+      <div class="sub">{region.name} &nbsp;·&nbsp; Last refreshed {ts}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -814,8 +825,8 @@ def _map_figure(processed: pd.DataFrame, risk_scores: np.ndarray, region, height
     )
     fig = go.Figure(go.Choroplethmap(
         geojson=geojson, locations=df["zone_id"], z=df["risk_score"],
-        colorscale=RISK_CS, zmin=0, zmax=1, marker_opacity=0.78,
-        marker_line_width=0.3, marker_line_color="#0a0c10",
+        colorscale=RISK_CS, zmin=0, zmax=1, marker_opacity=0.82,
+        marker_line_width=0.9, marker_line_color="rgba(255,255,255,0.45)",
         colorbar=dict(title="Risk", tickformat=".0%", tickfont={"color": "#8a96a6", "size": 10},
                       title_font={"color": "#8a96a6"}, len=0.65, thickness=10, bgcolor="rgba(0,0,0,0)"),
         customdata=np.stack([df["zone_id"], df["fwi"], df["risk_pct"]], axis=-1),
@@ -1033,15 +1044,6 @@ def render_ca_simulation(twin: DigitalTwin, key_prefix: str = "ca", allow_force_
             'above the alert threshold to ignite from. This is a real result, not a bug - it means current '
             'conditions genuinely don\'t support fast fire spread (e.g. real live data during the monsoon '
             'season, or a calm synthetic draw in demo mode).</div>', unsafe_allow_html=True)
-        if allow_force_ignite:
-            if st.button("Force-ignite the 5 highest-risk zones anyway (demo mode)",
-                         key=f"{key_prefix}_force_btn"):
-                with st.spinner("Simulating fire spread from the top 5 riskiest zones..."):
-                    history = twin.simulate_spread_from_top_n(5)
-                st.session_state[history_key] = history
-                st.session_state[f"{key_prefix}_forced"] = True
-                log_action("simulation", _sim_detail(history, forced=True), twin.region.name)
-                st.rerun()
         return
 
     if st.session_state.get(f"{key_prefix}_forced"):
