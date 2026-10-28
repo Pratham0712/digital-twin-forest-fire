@@ -2,6 +2,7 @@
 and the login screen. Checks that every value shown is labelled honestly
 (DEMO / SIMULATED / MODEL PREDICTION) and that nothing is invented when no
 state is loaded."""
+import json
 import pytest
 
 pytest.importorskip("streamlit.testing.v1")
@@ -88,13 +89,18 @@ def test_command_center_layout(app, monkeypatch):
     assert "Data &amp; system status" not in md and 'class="sys-grid"' not in md   # panel removed on request
     assert "Karnataka" in md                                          # region from the twin
     assert "Illustrative concept artwork" in md                       # hero is labelled as artwork
-    # hero is a plain <img> (static file, or inline fallback): no st.image, so no fullscreen button
-    assert 'class="cc-hero"' in md and ("app/static/dashboard_hero.jpg" in md or "data:image/jpeg;base64" in md)
+    # hero is the three-image carousel component (no st.image, so no fullscreen button)
+    hero = [c for c in app.get("component_instance") if "cc_hero_carousel" in c.proto.id]
+    assert len(hero) == 1
+    args = json.loads(hero[0].proto.json_args)
+    assert [s["title"] for s in args["slides"]] == ["Forest Fire Digital Twin Command Center",
+                                                    "Forest Fire Command Center",
+                                                    "Satellite-Based Forest Intelligence"]
     assert not app.get("imgs")
     assert 'class="fa' in md and "MODEL PREDICTION" in md and "DEMO DATA" in md
     assert 'class="cc-strip"' in md and 'class="kpi-row"' in md and 'Maps key missing' not in md
     assert "OPEN SPREAD SIMULATION  →" in [p.label for p in app.get("page_link")]
-    order = [md.index(s) for s in ('class="gt"', 'class="cc-hero"', "Illustrative concept artwork", 'class="cc-strip"',
+    order = [md.index(s) for s in ('class="gt"', "Illustrative concept artwork", 'class="cc-strip"',
                                    'class="fa', 'class="kpi-row"', 'class="ex-card"')]
     assert order == sorted(order)
     # switching it OFF -> real-data mode: never DEMO, the actual feed outcome is shown.
@@ -141,7 +147,7 @@ def test_login_screen(env):
     at = AppTest.from_file(str(DASH / "app.py"), default_timeout=240)
     at.run()
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["Sign in", "Create account"]
+    assert [t.label for t in at.tabs] == ["Sign in", "Create account"]   # sign in + viewer self sign-up
     md = _md(at)
     assert "FOREST FIRE DIGITAL TWIN" in md and "Secure Research Command Center" in md
     assert "Sign-up creates a" in md and "viewer" in md                # viewer self sign-up

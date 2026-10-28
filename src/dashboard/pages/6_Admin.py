@@ -117,16 +117,15 @@ with tab_users:
                 st.error("Enter the new user's email address - the sign-in details are sent there.")
             elif len(pw) < 8:
                 st.error("Password must be at least 8 characters (or leave it blank to generate one).")
-            elif db.create_user(uname, pw, new_role, email=mail):
+            elif db.admin_create_user(st.session_state.get("auth_user", ""), uname, pw, new_role, email=mail):
                 actor = st.session_state.get("auth_user", "admin")
                 _users.clear(); _counts.clear()
                 import os
                 notifier_ = EmailNotifier()
                 with st.spinner("Emailing the sign-in details..."):
                     sent = notifier_.send_credentials(mail, uname, pw, new_role, os.getenv("APP_URL", "").strip())
-                db.log_activity("admin", f"Created {new_role} account '{uname}'"
-                                + (f" and emailed the sign-in details to {mail}" if sent
-                                   else " (sign-in email not sent)"), actor=actor)
+                db.log_activity("admin", f"Sign-in details for '{uname}' "
+                                + (f"emailed to {mail}" if sent else "not emailed (send failed)"), actor=actor)
                 if sent:
                     st.success(f"Created {new_role} account '{uname}' and emailed the sign-in details to {mail}.")
                 else:
@@ -172,48 +171,7 @@ with tab_history:
         st.info("No alerts recorded yet.")
 
 with tab_notify:
-    st.subheader("Email notifications")
-    notifier = EmailNotifier()
-    if notifier.is_configured:
-        st.success(
-            f"Configured - alerts for newly-EXTREME zones are sent to "
-            f"{len(notifier.recipients)} recipient(s) via {notifier.smtp_host}."
-        )
-    else:
-        st.warning("Not configured yet.")
-        with st.expander("Configure email alerts"):
-            st.markdown(
-                "Add the mail server (SMTP host and port), the sender login (SMTP user and "
-                "app password) and the list of recipient emails to the app's settings "
-                "(`.env` locally, Secrets on Streamlit Cloud).\n\n"
-                "For Gmail, use an App Password (Google Account > Security > App passwords), "
-                "not your normal password."
-            )
-
+    from src.dashboard.ui.alerts_ui import render_auto_alerts, render_provider_config
+    render_provider_config()
     st.markdown("---")
-    st.markdown("**Send a test alert now**")
-    st.caption(
-        "Sends a real alert email immediately, without waiting for an actual EXTREME "
-        "zone to be detected. Does not affect any stored data."
-    )
-    if st.button("Send test alert email", disabled=not notifier.is_configured):
-        from datetime import datetime, timezone
-        from src.digital_twin.twin_state import ZoneAlert
-        demo_alert = ZoneAlert(
-            zone_id="DEMO-0001", latitude=13.35, longitude=75.20, risk_score=0.91,
-            severity="EXTREME",
-            reason="extreme FWI (78.4); low humidity (11%); high wind (11.2 m/s) "
-                   "[TEST ALERT - triggered manually from the Admin page, not a real detection]",
-            triggered_at=datetime.now(timezone.utc).isoformat(),
-        )
-        with st.spinner("Sending..."):
-            sent = notifier.send_new_extreme_alert("Karnataka Western Ghats (TEST)", [demo_alert])
-        db.log_activity("email_sent" if sent else "email_failed",
-                        "Test alert email " + ("sent" if sent else "could not be sent"),
-                        actor=st.session_state.get("auth_user", "admin"))
-        if sent:
-            st.success(f"Sent - check the inbox for {', '.join(notifier.recipients)}.")
-        else:
-            st.error("Send failed - check the SMTP settings above (host, port, and app password).")
-    if not notifier.is_configured:
-        st.caption("Configure SMTP above first - the button unlocks once all four variables are set.")
+    render_auto_alerts()

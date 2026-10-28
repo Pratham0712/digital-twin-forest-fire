@@ -25,11 +25,15 @@ logger = logging.getLogger(__name__)
 
 class EmailNotifier:
     def __init__(self):
-        self.smtp_host = os.getenv("SMTP_HOST", "")
-        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        self.smtp_user = os.getenv("SMTP_USER", "")
-        self.smtp_password = os.getenv("SMTP_PASSWORD", "")
-        recipients_raw = os.getenv("ALERT_RECIPIENT_EMAILS", "")
+        from src.notifications import config as cfg   # Admin session -> environment -> secrets
+        self.smtp_host = cfg.get("SMTP_HOST", "")
+        try:
+            self.smtp_port = int(cfg.get("SMTP_PORT", "587"))
+        except ValueError:
+            self.smtp_port = 587
+        self.smtp_user = cfg.get("SMTP_USER", "")
+        self.smtp_password = cfg.get("SMTP_PASSWORD", "")
+        recipients_raw = cfg.get("ALERT_RECIPIENT_EMAILS", "")
         self.recipients: List[str] = [
             r.strip() for r in recipients_raw.split(",") if r.strip()
         ]

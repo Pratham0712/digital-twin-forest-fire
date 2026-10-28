@@ -305,6 +305,27 @@ class DataIngestionModule:
 
         return out
 
+    def _fetch_feeds(self):
+        """NASA FIRMS and OpenWeatherMap are independent requests: in live mode they run side by side, so a
+        refresh waits for the slower of the two instead of their sum. Same requests, same results, same error
+        handling (an exception in either is re-raised here). Per-feed durations go to self.last_fetch_timings."""
+        import time as _time
+        from concurrent.futures import ThreadPoolExecutor
+
+        def timed(fn):
+            t0 = _time.perf_counter()
+            out = fn()
+            return out, _time.perf_counter() - t0
+
+        if self.offline:                                 # demo / scenario data: local, nothing to overlap
+            (hot, t_f), (wx, t_w) = timed(self.fetch_fire_hotspots), timed(self.fetch_weather)
+        else:
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="feed") as pool:
+                f_hot, f_wx = pool.submit(timed, self.fetch_fire_hotspots), pool.submit(timed, self.fetch_weather)
+                (hot, t_f), (wx, t_w) = f_hot.result(), f_wx.result()
+        self.last_fetch_timings = {"firms_s": t_f, "weather_s": t_w}
+        return hot, wx
+
     def build_unified_frame(self) -> pd.DataFrame:
         """
         Fetches hotspots + weather and joins both onto the region grid,
@@ -312,8 +333,8 @@ class DataIngestionModule:
         consumes. This mirrors 'Data flows ... into the processing pipeline'
         (Report 6.1.1).
         """
-        hotspots = self.static_mask.filter(self.fetch_fire_hotspots())
-        weather = self.fetch_weather()
+        hotspots, weather = self._fetch_feeds()
+        hotspots = self.static_mask.filter(hotspots)
         # Full multi-day detection history is kept for the model's
         # fire-history features (src/ml_models/fire_history.py); only the
         # most recent ~48h count as "active" fires on the map / in the CA seed.

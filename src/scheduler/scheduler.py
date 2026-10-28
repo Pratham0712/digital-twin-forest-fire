@@ -18,7 +18,7 @@ config/config.py) for every configured region, and on each cycle:
   3. saves the new snapshot + alerts (database.save_snapshot)
   4. diffs current EXTREME zones against the previous set -> genuinely NEW
      extreme detections only
-  5. emails those new detections (email_notifier.send_new_extreme_alert)
+  5. evaluates automatic fire alerts (src/notifications/auto_alerts.py: confidence threshold, cooldown, SMS -> e-mail)
 
 Run it:
     python -m src.scheduler.scheduler                 # runs forever, cron-like
@@ -40,7 +40,6 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from config.config import REGION, SYSTEM, API, MODELS_DIR
 from src.digital_twin.twin_state import DigitalTwin, persist_snapshot_and_notify
 from src.storage import database as db
-from src.notifications.email_notifier import EmailNotifier
 from src.regions import REGION_PRESETS
 
 logger = logging.getLogger(__name__)
@@ -52,18 +51,18 @@ def load_ml_model(region=None):
     return load_xgb(choose_for_region(region).model_file)
 
 
-def run_one_cycle(region_name: str, offline: bool, notifier: EmailNotifier):
+def run_one_cycle(region_name: str, offline: bool, notifier=None):
     region = REGION_PRESETS.get(region_name, REGION)
     logger.info("[%s] Starting refresh cycle...", region.name)
 
     twin = DigitalTwin(ml_model=load_ml_model(region), offline=offline, region=region)
     snapshot = twin.refresh()
     # Same persistence + alert-email + activity-log path the dashboard uses.
-    result = persist_snapshot_and_notify(twin, notifier=notifier, actor="scheduler",
-                                         trigger="Background scheduler")
-    logger.info("[%s] %d alerts, %d newly extreme, emailed=%s, %.1fs",
-                region.name, len(snapshot.alerts), result["new_extreme_count"],
-                result["emailed"], twin.last_timings.get("total_s", 0.0))
+    result = persist_snapshot_and_notify(twin, actor="scheduler", trigger="Background scheduler")
+    auto = result.get("auto_alert") or {}
+    logger.info("[%s] %d alerts, %d newly extreme, auto-alert=%s (SMS %s, email %s), %.1fs",
+                region.name, len(snapshot.alerts), result["new_extreme_count"], auto.get("decision"),
+                auto.get("sms_status"), auto.get("email_status"), twin.last_timings.get("total_s", 0.0))
 
 
 def main():
@@ -93,14 +92,15 @@ def main():
     )
     offline = args.offline if args.offline is not None else not bool(API.firms_map_key)
     interval_minutes = args.interval_minutes or SYSTEM.min_refresh_interval_minutes
-    notifier = EmailNotifier()
-
-    if not notifier.is_configured:
-        logger.warning(
-            "Email notifications are not configured (set SMTP_HOST, SMTP_USER, "
-            "SMTP_PASSWORD, ALERT_RECIPIENT_EMAILS in .env). The scheduler will "
-            "still run and log new detections, it just won't email them."
-        )
+    from src.notifications import auto_alerts
+    from src.notifications import config as ncfg
+    st_ = auto_alerts.get_settings()
+    if not st_["enabled"]:
+        logger.warning("Automatic fire alerts are DISABLED (Admin -> Notifications). Refreshes are still saved.")
+    elif not (ncfg.sms_recipients() or ncfg.smtp_settings()["recipients"]):
+        logger.warning("Automatic fire alerts are enabled but no ALERT_SMS_RECIPIENTS / ALERT_RECIPIENT_EMAILS "
+                       "are configured - nothing can be sent.")
+    notifier = None
 
     if args.once:
         for name in region_names:

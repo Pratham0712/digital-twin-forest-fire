@@ -226,7 +226,7 @@ def twin_scenario(mode: str, values: dict, extra: Optional[dict], weather_status
 def zone_risk(twin, lat: float, lon: float) -> dict:
     from src.simulation.local_spread import zone_conditions
     snap = twin.current_snapshot
-    cond = zone_conditions(snap.processed_grid, snap.risk_scores, lat, lon)
+    cond = zone_conditions(snap.processed_grid, snap.risk_scores, lat, lon, getattr(snap, "prediction", None))
     r = cond.get("risk_score")
     sev = twin.alert_engine.classify(float(r)) if r is not None and math.isfinite(float(r)) else "UNKNOWN"
     return {**cond, "severity": sev}

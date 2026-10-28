@@ -21,7 +21,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional
 
-from sqlalchemy import Column, Integer, String, Table, Text, insert, select, update
+from sqlalchemy import Column, Index, Integer, String, Table, Text, insert, select, update
 
 from src.storage import database as db
 
@@ -53,6 +53,22 @@ T_VERIFY = Table(
     Column("used", Integer, nullable=False, server_default="0"),
     extend_existing=True,
 )
+# Hardened verification codes (the older alert_verifications table is kept for history but no longer written):
+# bound to the exact address / number, single use, short expiry, limited attempts, resend rate limit.
+T_VCODE = Table(
+    "recipient_verification_codes", db.metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("recipient_id", Integer, nullable=False),
+    Column("channel", String(8), nullable=False),
+    Column("target_hash", String(64), nullable=False),    # sha256 of the address / number the code was sent to
+    Column("code_hash", String(64), nullable=False),      # sha256(salt | recipient | channel | code)
+    Column("salt", String(32), nullable=False),
+    Column("created_utc", String(40), nullable=False),
+    Column("expires_utc", String(40), nullable=False),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("state", String(12), nullable=False, server_default="active"),   # active|used|expired|locked|superseded|failed
+)
+
 T_ALERTS = Table(
     "emergency_alerts", db.metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -102,8 +118,13 @@ T_REPORTS = Table(
     Column("snapshot", Text, nullable=False),
     extend_existing=True,
 )
-_TABLES = [T_RECIP, T_VERIFY, T_ALERTS, T_DELIV, T_INAPP, T_REPORTS]
+_TABLES = [T_RECIP, T_VERIFY, T_VCODE, T_ALERTS, T_DELIV, T_INAPP, T_REPORTS]
 _READY: set = set()
+
+
+# Delivery rows are looked up by alert id (alert history, delivery status). create_all() does not add indexes to
+# tables that already exist, so the index is created separately - non-destructive, IF NOT EXISTS semantics.
+IX_DELIV_ALERT = Index("ix_alert_deliveries_alert_id", T_DELIV.c.alert_id)
 
 
 def ensure_tables():
@@ -111,6 +132,11 @@ def ensure_tables():
     url = db.database_url()
     if url not in _READY:
         db.metadata.create_all(db.get_engine(), tables=_TABLES, checkfirst=True)
+        try:
+            IX_DELIV_ALERT.create(db.get_engine(), checkfirst=True)
+        except Exception as exc:                          # an index is an optimisation, never a reason to fail
+            import logging
+            logging.getLogger(__name__).warning("could not create delivery index: %s", type(exc).__name__)
         _READY.add(url)
 
 
@@ -120,6 +146,17 @@ def _now() -> str:
 
 # ── recipients ──────────────────────────────────────────────────────────────
 
+def _norm_phone(phone) -> Optional[str]:
+    """Stored in international format; an invalid number is rejected, never stored half-valid."""
+    if not (phone or "").strip():
+        return None
+    from src.notifications.config import normalise_phone
+    n = normalise_phone(phone)
+    if n is None:
+        raise ValueError("invalid mobile number - use a 10-digit Indian mobile number or +<country code><number>")
+    return n
+
+
 def add_recipient(name: str, organisation: str = "", designation: str = "", email: str = "", phone: str = "",
                   prefs: Optional[dict] = None, categories: Optional[List[str]] = None, actor: str = "admin") -> int:
     ensure_tables()
@@ -127,7 +164,7 @@ def add_recipient(name: str, organisation: str = "", designation: str = "", emai
     with db.get_connection() as c:
         r = c.execute(insert(T_RECIP).values(
             name=name.strip(), organisation=organisation.strip(), designation=designation.strip(),
-            email=(email or "").strip().lower() or None, phone=(phone or "").strip() or None,
+            email=(email or "").strip().lower() or None, phone=_norm_phone(phone),
             prefs=json.dumps(prefs or {"email": True, "sms": False}),
             categories=json.dumps(categories or ["SIMULATION ONLY", "OBSERVATION-BASED"]),
             created_utc=now, updated_utc=now, created_by=actor))
@@ -147,9 +184,9 @@ def update_recipient(rid: int, actor: str = "admin", **fields) -> None:
             vals["email"] = new
             vals["email_verified"] = 0                    # a changed address must be verified again
         elif k == "phone":
-            vals["phone"] = (v or "").strip() or None
+            vals["phone"] = _norm_phone(v)
             vals["phone_verified"] = 0
-        elif k in ("name", "organisation", "designation", "enabled", "email_verified", "phone_verified"):
+        elif k in ("name", "organisation", "designation", "enabled", "email_verified"):
             vals[k] = v
     if "email" in fields and fields.get("email_verified"):
         vals["email_verified"] = 1
@@ -180,31 +217,124 @@ def _h(code: str) -> str:
     return hashlib.sha256(code.encode()).hexdigest()
 
 
-def create_verification(rid: int, channel: str) -> str:
-    """New 6-digit code (stored hashed, valid 15 minutes); the caller sends it."""
+VERIFY_TTL_MIN = 10            # a code is valid for 10 minutes
+VERIFY_MAX_ATTEMPTS = 5        # wrong entries before the code is locked
+RESEND_MIN_GAP_S = 60          # at most one new code per recipient and channel per minute
+RESEND_MAX_PER_HOUR = 5        # and at most five per hour
+
+
+def _code_hash(salt: str, rid: int, channel: str, code: str) -> str:
+    return hashlib.sha256(f"{salt}|{int(rid)}|{channel}|{code}".encode()).hexdigest()
+
+
+def _target_hash(target: str) -> str:
+    return hashlib.sha256((target or "").strip().lower().encode()).hexdigest()
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat(timespec="seconds")
+
+
+def verification_wait(rid: int, channel: str, now: Optional[datetime] = None) -> int:
+    """Seconds until a new code may be requested (0 = allowed)."""
     ensure_tables()
-    code = f"{secrets.randbelow(10 ** 6):06d}"
+    now = now or datetime.now(timezone.utc)
     with db.get_connection() as c:
-        c.execute(insert(T_VERIFY).values(recipient_id=int(rid), channel=channel, code_hash=_h(code),
-                                          expires_utc=(datetime.now(timezone.utc) + timedelta(minutes=15))
-                                          .isoformat(timespec="seconds")))
+        rows = [r.created_utc for r in c.execute(
+            select(T_VCODE.c.created_utc).where((T_VCODE.c.recipient_id == int(rid)) & (T_VCODE.c.channel == channel)
+                                                & (T_VCODE.c.created_utc >= _iso(now - timedelta(hours=1)))))]
+    if not rows:
+        return 0
+    last = max(datetime.fromisoformat(x) for x in rows)
+    wait = RESEND_MIN_GAP_S - (now - last).total_seconds()
+    if len(rows) >= RESEND_MAX_PER_HOUR:
+        oldest = min(datetime.fromisoformat(x) for x in rows)
+        wait = max(wait, 3600 - (now - oldest).total_seconds())
+    return max(0, int(wait + 0.999))
+
+
+VERIFY_CHANNELS = ("email",)    # SMS verification was removed: mobile numbers are never marked verified
+
+
+def issue_verification(rid: int, channel: str, target: str, now: Optional[datetime] = None) -> str:
+    """New single-use 6-digit code for exactly this e-mail address. Earlier unused codes are superseded.
+    The caller checks verification_wait() first and sends the code; the plain code is never stored."""
+    if channel not in VERIFY_CHANNELS:
+        raise ValueError("only e-mail addresses can be verified")
+    ensure_tables()
+    now = now or datetime.now(timezone.utc)
+    code = f"{secrets.randbelow(10 ** 6):06d}"
+    salt = secrets.token_hex(8)
+    with db.get_connection() as c:
+        c.execute(update(T_VCODE).where((T_VCODE.c.recipient_id == int(rid)) & (T_VCODE.c.channel == channel)
+                                        & (T_VCODE.c.state == "active")).values(state="superseded"))
+        c.execute(insert(T_VCODE).values(recipient_id=int(rid), channel=channel, target_hash=_target_hash(target),
+                                         code_hash=_code_hash(salt, rid, channel, code), salt=salt,
+                                         created_utc=_iso(now),
+                                         expires_utc=_iso(now + timedelta(minutes=VERIFY_TTL_MIN))))
     return code
 
 
-def confirm_verification(rid: int, channel: str, code: str, actor: str = "admin") -> bool:
-    ensure_tables()
-    now = _now()
+def cancel_verification(rid: int, channel: str) -> None:
+    """The code could not be sent: invalidate it (it still counts towards the resend limit)."""
     with db.get_connection() as c:
-        rows = list(c.execute(select(T_VERIFY).where((T_VERIFY.c.recipient_id == int(rid)) &
-                                                     (T_VERIFY.c.channel == channel) & (T_VERIFY.c.used == 0))))
-        for r in rows:
-            if r.code_hash == _h((code or "").strip()) and r.expires_utc >= now:
-                c.execute(update(T_VERIFY).where(T_VERIFY.c.id == r.id).values(used=1))
-                col = "email_verified" if channel == "email" else "phone_verified"
-                c.execute(update(T_RECIP).where(T_RECIP.c.id == int(rid)).values(**{col: 1, "updated_utc": now}))
-                db.log_activity("alert_recipient", f"Recipient #{rid} {channel} verified", actor=actor)
-                return True
-    return False
+        c.execute(update(T_VCODE).where((T_VCODE.c.recipient_id == int(rid)) & (T_VCODE.c.channel == channel)
+                                        & (T_VCODE.c.state == "active")).values(state="failed"))
+
+
+def check_verification(rid: int, channel: str, code: str, actor: str = "admin",
+                       now: Optional[datetime] = None) -> tuple:
+    """(ok, reason). Marks the e-mail verified only for a correct, unexpired, unused code that was sent to the
+    recipient's CURRENT address. Any other channel is refused (SMS verification was removed)."""
+    if channel not in VERIFY_CHANNELS:
+        return False, "Only e-mail addresses can be verified."
+    ensure_tables()
+    now = now or datetime.now(timezone.utc)
+    code = (code or "").strip()
+    r = get_recipient(rid)
+    if r is None:
+        return False, "Recipient not found."
+    target = r.get("email")
+    with db.get_connection() as c:
+        row = c.execute(select(T_VCODE).where((T_VCODE.c.recipient_id == int(rid)) & (T_VCODE.c.channel == channel))
+                        .order_by(T_VCODE.c.id.desc())).first()
+        if row is None or row.state in ("superseded", "failed"):
+            return False, "No active code - send a new verification code first."
+        if row.state == "used":
+            return False, "This code was already used - send a new verification code."
+        if row.state == "locked":
+            return False, "Too many incorrect attempts - send a new verification code."
+        if row.state == "expired" or row.expires_utc < _iso(now):
+            c.execute(update(T_VCODE).where(T_VCODE.c.id == row.id).values(state="expired"))
+            return False, f"The code has expired (valid {VERIFY_TTL_MIN} minutes) - send a new one."
+        if not target or row.target_hash != _target_hash(target):
+            c.execute(update(T_VCODE).where(T_VCODE.c.id == row.id).values(state="superseded"))
+            return False, "The address / number changed after the code was sent - send a new code."
+        if not (code.isdigit() and len(code) == 6 and
+                secrets.compare_digest(row.code_hash, _code_hash(row.salt, rid, channel, code))):
+            attempts = row.attempts + 1
+            locked = attempts >= VERIFY_MAX_ATTEMPTS
+            c.execute(update(T_VCODE).where(T_VCODE.c.id == row.id)
+                      .values(attempts=attempts, state="locked" if locked else "active"))
+            result = (False, ("Too many incorrect attempts - send a new verification code." if locked else
+                              f"Incorrect code ({VERIFY_MAX_ATTEMPTS - attempts} attempt(s) left)."))
+            note = f"Recipient #{rid} {channel} verification: incorrect code" + (" (locked)" if locked else "")
+        else:
+            c.execute(update(T_VCODE).where(T_VCODE.c.id == row.id).values(state="used"))
+            c.execute(update(T_RECIP).where(T_RECIP.c.id == int(rid)).values(email_verified=1, updated_utc=_now()))
+            result, note = (True, "Verified."), f"Recipient #{rid} {channel} verified"
+    db.log_activity("alert_recipient", note, actor=actor)     # after the transaction (SQLite: no self-lock)
+    return result
+
+
+def create_verification(rid: int, channel: str) -> str:
+    """Compatibility wrapper: issue a code for the recipient's current address / number."""
+    r = get_recipient(rid) or {}
+    return issue_verification(rid, channel, r.get("email"))
+
+
+def confirm_verification(rid: int, channel: str, code: str, actor: str = "admin") -> bool:
+    return check_verification(rid, channel, code, actor=actor)[0]
 
 
 # ── alerts, deliveries, in-app ──────────────────────────────────────────────
@@ -249,10 +379,14 @@ def alert_history(limit: int = 100) -> List[dict]:
     ensure_tables()
     with db.get_connection() as c:
         alerts = [dict(r._mapping) for r in c.execute(select(T_ALERTS).order_by(T_ALERTS.c.id.desc()).limit(limit))]
+        ids = [a["alert_id"] for a in alerts]
+        by_alert: dict = {i: [] for i in ids}
+        if ids:                                           # one query for all deliveries (was one per alert)
+            for r in c.execute(select(T_DELIV).where(T_DELIV.c.alert_id.in_(ids)).order_by(T_DELIV.c.id)):
+                by_alert[r.alert_id].append(dict(r._mapping))
         for a in alerts:
             a["summary"] = json.loads(a.get("summary") or "{}")
-            a["deliveries"] = [dict(r._mapping) for r in c.execute(
-                select(T_DELIV).where(T_DELIV.c.alert_id == a["alert_id"]).order_by(T_DELIV.c.id))]
+            a["deliveries"] = by_alert.get(a["alert_id"], [])
     return alerts
 
 
@@ -307,3 +441,23 @@ def mask(value: Optional[str]) -> str:
         user, dom = v.split("@", 1)
         return (user[:2] + "***@" + dom) if user else "***@" + dom
     return ("***" + v[-3:]) if len(v) > 3 else "***"
+
+
+def recent_deliveries(limit: int = 50, channel: Optional[str] = None) -> List[dict]:
+    """Latest delivery attempts (all events, incl. tests and verifications), newest first."""
+    ensure_tables()
+    q = select(T_DELIV).order_by(T_DELIV.c.id.desc()).limit(limit)
+    if channel:
+        q = select(T_DELIV).where(T_DELIV.c.channel == channel).order_by(T_DELIV.c.id.desc()).limit(limit)
+    with db.get_connection() as c:
+        return [dict(r._mapping) for r in c.execute(q)]
+
+
+def update_delivery_status(delivery_id: int, status: str, error: Optional[str] = None) -> None:
+    """Provider-confirmed status update (e.g. Twilio 'delivered' / 'undelivered')."""
+    ensure_tables()
+    vals = {"status": status}
+    if error:
+        vals["error"] = str(error)[:500]
+    with db.get_connection() as c:
+        c.execute(update(T_DELIV).where(T_DELIV.c.id == int(delivery_id)).values(**vals))

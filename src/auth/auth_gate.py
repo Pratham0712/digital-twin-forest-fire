@@ -196,6 +196,26 @@ def _session_watch():
         st.rerun(scope="app")
 
 
+def _sync_light_flag(light: bool):
+    """Marks the page with data-ff-sky="1" while the Light theme is on. The header "⋮" menu
+    (components/theme_switch) then keeps its Navy colours off, so the two never mix; turning
+    Light off restores the theme saved in that menu."""
+    with st.container(key="ff_light_flag"):          # hidden by theme_switch CSS: takes no space
+        _light_flag_script(light)
+
+
+def _light_flag_script(light: bool):
+    components.html(f"""<script>
+(function(){{
+  try {{
+    var P = window.parent, r = P.document.documentElement;
+    if ({'true' if light else 'false'}) r.setAttribute('data-ff-sky', '1'); else r.removeAttribute('data-ff-sky');
+    if (P.__ffTheme) P.__ffTheme.apply(P.__ffTheme.get());
+  }} catch (e) {{}}
+}})();
+</script>""", height=0)
+
+
 def _hide_admin_pages_css():
     sel = ", ".join(f'[data-testid="stSidebarNav"] li:has(a[href*="{p}"])' for p in ADMIN_PAGES)
     st.markdown(f"<style>{sel} {{ display: none !important; }}</style>", unsafe_allow_html=True)
@@ -220,9 +240,11 @@ def require_login():
         _record_activity()
         if st.session_state.pop("_cookie_pending", False):
             _set_cookie(st.session_state["_sid"])
-        if st.session_state.get("theme") == "light":
+        light = st.session_state.get("theme") == "light"
+        if light:
             from src.dashboard.ui.theme import LIGHT_THEME_CSS
             st.markdown(LIGHT_THEME_CSS, unsafe_allow_html=True)
+        _sync_light_flag(light)
         if not is_admin():
             _hide_admin_pages_css()
         _session_watch()
@@ -264,6 +286,7 @@ def _render_sign_in():
     with st.form("login_form", clear_on_submit=False):
         username = st.text_input("Username", placeholder="Enter your username")
         password = st.text_input("Password", type="password", placeholder="Enter your password")
+        st.markdown("<div class='lg-hint'>Press Enter or select Sign in</div>", unsafe_allow_html=True)
         submitted = st.form_submit_button("Sign in", use_container_width=True)
     if submitted:
         _ensure_db_ready()             # waits for the background set-up if still running

@@ -24,6 +24,7 @@ import streamlit.components.v1 as components
 from config.config import REGION, SYSTEM, MODELS_DIR, DATA_PROCESSED_DIR, DATA_RAW_DIR, RegionConfig
 from src.data_ingestion.ingestion_module import region_bounds_error
 from src.digital_twin.twin_state import DigitalTwin
+from src.dashboard.ui.charts import CHART_CONFIG
 from src.simulation.cellular_automata import CellState
 
 
@@ -67,7 +68,13 @@ def set_page(title: str, icon: str = ":material/local_fire_department:"):
             pass
     from src.dashboard.ui.theme import THEME_CSS, active_nav_css
     from src.dashboard.ui.global_ticker import create_ticker_slot, render_global_ticker
-    st.markdown(CSS + THEME_CSS + active_nav_css(title), unsafe_allow_html=True)
+    # Appearance: header "⋮" menu (Default Dark / Professional Navy Blue); CSS-only switch.
+    # Its styles ride in the same <style> block (no extra element) and its controller is hidden.
+    from src.dashboard.ui.theme_switch import THEME_SWITCH_CSS, render_theme_switch
+    from src.dashboard.ui.charts import CHART_TOOLBAR_CSS
+    st.markdown(CSS + THEME_CSS + active_nav_css(title) + THEME_SWITCH_CSS
+                + "\n<style>" + CHART_TOOLBAR_CSS + "</style>", unsafe_allow_html=True)
+    render_theme_switch()
     # Global status ticker: reserved here so it sits above every page's content;
     # drawn now from the shared twin and redrawn by ensure_twin() when it changes.
     create_ticker_slot()
@@ -592,8 +599,12 @@ def render_autorefresh_status(offline: bool, scenario: dict, region):
     # happens to rerun (i.e. once per interval) - not a smooth countdown.
     # This renders a tiny client-side timer instead, so the number
     # actually ticks down second-by-second in the browser.
+    from src.dashboard.ui.theme_switch import IFRAME_THEME_SYNC
     components.html(
         f"""
+        <style>html.ff-navy div {{ color:#8298B3 !important; }} html.ff-navy #dt-cd {{ color:#F3F7FC !important; }}
+               html.ff-navy div > span:first-child {{ background:#20D995 !important; }}</style>
+        {IFRAME_THEME_SYNC}
         <div style="font-family:'Plus Jakarta Sans','Segoe UI',sans-serif;font-size:13px;
                     color:{cd_txt};display:flex;align-items:center;gap:8px;
                     margin-top:2px;">
@@ -776,8 +787,8 @@ def render_kpi_row(summary: dict):
         ("Extreme", "flame", f"{ext}", "crit" if ext else "ok", "crit" if ext else "ok", "immediate attention"),
         ("High", "alert", f"{high}", "warn" if high else "ok", "warn" if high else "ok", "elevated risk"),
         ("Moderate", "eye", f"{bd.get('MODERATE', 0)}", "", "fire", "keep under watch"),
-        ("Peak risk", "gauge", f"{max_r:.0%}", max_cls, max_cls, "highest zone score"),
-        ("Mean risk", "avg", f"{summary.get('mean_risk_score', 0):.0%}", "", "neutral", "regional average"),
+        ("Peak risk", "gauge", f"{max_r:.0%}", max_cls, max_cls, "highest zone risk index"),
+        ("Mean risk", "avg", f"{summary.get('mean_risk_score', 0):.0%}", "", "neutral", "regional average risk index"),
     ]
     body = "".join(
         f'<div class="kpi k-{accent}"><div class="top"><div class="lbl">{lbl}</div>'
@@ -873,7 +884,7 @@ def render_risk_map(processed: pd.DataFrame, risk_scores: np.ndarray, region=REG
             cache.clear()
         cache[key] = _map_figure(processed, risk_scores, region, height)
     fig, n_active = cache[key]
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
 
     if scenario_active and n_active:
         st.markdown(f"""
@@ -914,7 +925,7 @@ def render_risk_gauge(summary: dict):
     ))
     fig.update_layout(height=200, margin=dict(l=16, r=16, t=10, b=0),
                        paper_bgcolor="rgba(0,0,0,0)", font={"color": "#8a96a6"})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
     st.caption(f"Mean regional risk · alert threshold at {SYSTEM.alert_threshold_pct:.0f}%")
 
 
@@ -932,7 +943,7 @@ def render_alerts(alerts, summary: dict, limit: int = 15):
                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                            xaxis=dict(tickfont={"color": "#8a96a6", "size": 11}, gridcolor="#232b36"),
                            yaxis=dict(visible=False), showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
 
     if not alerts:
         st.markdown('<div class="info-box">No zones above the alert threshold.</div>', unsafe_allow_html=True)
@@ -1112,7 +1123,7 @@ def render_ca_simulation(twin: DigitalTwin, key_prefix: str = "ca", allow_force_
     </div>
     """, unsafe_allow_html=True)
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
 
     col_compass, col_kpis = st.columns([1, 3], gap="medium")
     with col_compass:
@@ -1138,7 +1149,7 @@ def render_ca_simulation(twin: DigitalTwin, key_prefix: str = "ca", allow_force_
                         yaxis=dict(title="Cells", tickfont={"color": "#8a96a6", "size": 10}, gridcolor="#232b36"),
                         legend=dict(font={"color": "#8a96a6", "size": 10}, bgcolor="rgba(0,0,0,0)"),
                         title=dict(text="Spread over time", font={"color": "#8a96a6", "size": 11}, x=0))
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True, config=CHART_CONFIG)
     st.markdown("""
     <div class="legend">
       <span><span class="dot" style="background:#1a3d1f"></span>Unburned forest</span>
@@ -1194,7 +1205,7 @@ def render_model_performance():
         showlegend=True, legend={"font": {"color": "#c3ccd8"}, "bgcolor": "rgba(0,0,0,0)"},
         paper_bgcolor="rgba(0,0,0,0)", height=400, margin=dict(l=50, r=50, t=30, b=30),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=CHART_CONFIG)
 
     fig2 = go.Figure()
     metric_display = {"auc_roc": "AUC-ROC", "recall": "Recall", "precision": "Precision",
@@ -1210,7 +1221,7 @@ def render_model_performance():
                         xaxis=dict(tickfont={"color": "#c3ccd8"}, gridcolor="#232b36"),
                         yaxis=dict(range=[0, 1.15], tickfont={"color": "#8a96a6"}, gridcolor="#232b36"),
                         legend=dict(font={"color": "#c3ccd8"}, bgcolor="rgba(0,0,0,0)"))
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True, config=CHART_CONFIG)
 
     display_df = df.copy()
     fnr_col = "false_negative_rate" if "false_negative_rate" in display_df.columns else None

@@ -2,7 +2,8 @@
 gatherUsageStats = false
 
 [client]
-# No Deploy button / developer menu, and the "C" clear-cache shortcut is disabled.
+# No Deploy button / developer menu, and the "C" clear-cache shortcut is disabled. The dashboard's own
+# "⋮" menu (src/dashboard/components/theme_switch) provides Appearance, Rerun, Clear cache and Print.
 toolbarMode = "minimal"
 
 [server]

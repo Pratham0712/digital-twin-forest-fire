@@ -26,6 +26,7 @@ import streamlit as st
 from src.dashboard.dashboard_common import (
     set_page, build_sidebar, REGION, DATA_RAW_DIR, _zoom_for,
 )
+from src.dashboard.ui.charts import CHART_CONFIG, MAP_CONFIG
 from src.auth.auth_gate import require_login, render_user_badge_in_sidebar
 
 set_page("Historical Time Machine")
@@ -149,7 +150,7 @@ fig_season.update_layout(
     legend=dict(font={"color": "#c3ccd8"}, bgcolor="rgba(0,0,0,0)"),
     font=dict(family="Plus Jakarta Sans, sans-serif"),
 )
-st.plotly_chart(fig_season, use_container_width=True)
+st.plotly_chart(fig_season, use_container_width=True, config=CHART_CONFIG)
 peak = monthly.groupby("month_name")["detections"].sum().reindex(month_order).fillna(0)
 st.caption(f"In {region.name}, detections peak in {peak.idxmax()} across the {df['year'].nunique()} seasons "
            f"({int(peak.max()):,} of {int(peak.sum()):,} detections in Jan to Jun).")
@@ -173,7 +174,10 @@ def build_map(name: str, _df: pd.DataFrame, min_lat, max_lat, min_lon, max_lon, 
 
     def trace(ym):
         sub = by_month[ym]
-        return go.Scattermap(lat=sub["latitude"], lon=sub["longitude"], mode="markers",
+        # float32 (~0.1 m precision, far finer than the 375 m VIIRS pixel) halves the browser payload; the
+        # plotted positions are unchanged at any map zoom
+        return go.Scattermap(lat=sub["latitude"].to_numpy(np.float32), lon=sub["longitude"].to_numpy(np.float32),
+                             mode="markers",
                              marker=dict(size=7, color="#ff6b4a", opacity=0.75))
 
     fig = go.Figure(data=[trace(months[0])], frames=[go.Frame(data=[trace(ym)], name=ym) for ym in months])
@@ -207,6 +211,6 @@ def build_map(name: str, _df: pd.DataFrame, min_lat, max_lat, min_lon, max_lon, 
 
 fig_map, n_months = build_map(region.name, df[["latitude", "longitude", "year_month"]],
                               region.min_lat, region.max_lat, region.min_lon, region.max_lon, using_real)
-st.plotly_chart(fig_map, use_container_width=True)
+st.plotly_chart(fig_map, use_container_width=True, config=MAP_CONFIG)
 st.caption(("Real" if using_real else "Synthetic preview") +
            f": {n_months} months animated, {len(df):,} total detections plotted.")

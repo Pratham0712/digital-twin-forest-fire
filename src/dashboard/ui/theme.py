@@ -147,12 +147,12 @@ a:focus-visible, button:focus-visible, [role="tab"]:focus-visible, input:focus-v
 @keyframes gtScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes gtBlink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
-/* ── Command Center hero (supplied artwork, never cropped or stretched; plain <img>, no toolbar) ── */
-.cc-hero { position: relative; width: 100%; border-radius: 18px; overflow: hidden; line-height: 0;
-    border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 22px 60px rgba(0,0,0,0.45); animation: heroIn .9s ease-out both; }
-.cc-hero img { display: block; width: 100%; height: auto; max-width: 100%; object-fit: contain;
-    user-select: none; -webkit-user-drag: none; pointer-events: none; }
-.cc-hero-note { font-size: 11.5px; color: #6F7B8B; margin: 8px 4px 0 4px; }
+/* the Light-theme flag's script frame (auth_gate._sync_light_flag) takes no space; its script still runs */
+.st-key-ff_light_flag, [data-testid="stLayoutWrapper"]:has(> .st-key-ff_light_flag),
+[data-testid="stElementContainer"]:has(> .st-key-ff_light_flag) { display: none !important; }
+
+/* ── Command Center hero: three-image carousel (components/hero_carousel/index.html, own iframe styles) ── */
+.cc-hero-note { font-size: 11.5px; color: #6F7B8B; margin: -6px 4px 0 4px; }
 @keyframes heroIn { from { opacity: 0; transform: scale(1.012); } to { opacity: 1; transform: scale(1); } }
 
 /* ── live status strip ── */
@@ -358,7 +358,7 @@ hr { border-color: var(--border) !important; }
 
 /* dashboard components */
 .hero, .kpi, .alert-card, .briefing-card, .info-box, .nav-card, .legend, .scenario-banner, .fa, .ex-card,
-[class*="st-key-cc_explore_"], .lv-card, .lm-card, .lm-status, .lm-chip, .sys-item, .cc-pill, .cc-hero-note {
+[class*="st-key-cc_explore_"], .lv-card, .lm-card, .lm-status, .lm-chip, .sys-item, .cc-pill {
     background: var(--surface) !important; border-color: var(--border) !important; color: var(--text) !important;
     box-shadow: 0 4px 16px rgba(30,90,140,0.10) !important; }
 .hero h1, .hero .sub, .hero .eyebrow, .kpi .val, .kpi .lbl, .kpi .ctx, .fa h3, .fa .meta, .fa .kicker, .fa .stat .l,
@@ -401,5 +401,19 @@ hr { border-color: var(--border) !important; }
 .js-plotly-plot .updatemenu-item-rect { fill: #F3F9FF !important; stroke: #8DBDE3 !important; }
 .js-plotly-plot .slider-rail-rect { fill: #A8CDEB !important; }
 .role-pill { background: rgba(226,98,14,0.12) !important; color: #B4500C !important; border-color: rgba(226,98,14,0.35) !important; }
+.cc-hero-note { background: transparent !important; color: var(--muted) !important; }
+.st-key-cc_alert [data-testid="stPageLink"] a p { color: #B42318 !important; }
+.fa .stat { background: #E6F3FD !important; border-color: var(--border) !important; }
+.fa .stat .n.hot { color: #C2410C !important; }
+[data-baseweb="popover"] [role="listbox"], [data-baseweb="popover"] [role="option"],
+[data-baseweb="popover"] ul > div, [data-baseweb="popover"] li { background-color: #FFFFFF !important; color: var(--text) !important; }
+[data-baseweb="popover"] [role="option"]:hover, [data-baseweb="popover"] [aria-selected="true"] { background-color: #E6F3FD !important; }
+/* the header "⋮" menu: readable on the light background; its Dark / Navy choices are hidden while Light is on */
+#ff-theme-btn { color: #17385A !important; }
+#ff-theme-btn:hover, #ff-theme-btn[aria-expanded="true"] { background: rgba(23,56,90,0.08) !important; border-color: var(--border) !important; }
+#ff-theme-menu { background: #FFFFFF !important; border-color: var(--border) !important; box-shadow: 0 16px 40px rgba(30,90,140,0.18) !important; }
+#ff-theme-menu [data-action] { color: var(--text) !important; }
+#ff-theme-menu [data-action]:hover { background: #E6F3FD !important; }
+#ff-theme-menu [data-theme], #ff-theme-menu .ff-tm-title:first-child, #ff-theme-menu .ff-tm-sep { display: none !important; }
 </style>
 """

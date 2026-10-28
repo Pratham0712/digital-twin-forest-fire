@@ -1,0 +1,587 @@
+{
+  "generated_utc": "2026-10-16T12:15:59.721199+00:00",
+  "task": "binary: satellite-detected fire in a 0.1-degree zone on a given day",
+  "validation": {
+    "train": [
+      "2023-01-01",
+      "2024-05-31"
+    ],
+    "test_held_out": [
+      "2025-01-01",
+      "2025-05-31"
+    ],
+    "train_rows": 424200,
+    "test_rows": 211400,
+    "method": "temporal hold-out (2025 season) + season-wise CV on 2023/2024 for candidates",
+    "seed": 42
+  },
+  "primary_metric": "PR-AUC (fires are ~4 % of zone-days) with early-warning recall as the safety constraint",
+  "gate_rules": {
+    "min_pr_auc_gain": 0.005,
+    "max_roc_auc_loss": 0.002,
+    "log_loss": "must not increase",
+    "max_early_warning_recall_loss": 0.01
+  },
+  "baseline": {
+    "name": "serving model (baseline)",
+    "file": "xgboost_real.json",
+    "sha256": "35950834a4721ec1",
+    "feature_columns": [
+      "wx_temperature_c",
+      "wx_humidity_pct",
+      "wx_wind_speed_ms",
+      "wx_precipitation_mm",
+      "ffmc",
+      "dmc",
+      "dc",
+      "bui",
+      "fwi",
+      "month",
+      "day_of_year",
+      "fwi_lag1",
+      "zone_clim",
+      "nbr_clim",
+      "latitude",
+      "longitude",
+      "fire_lag1",
+      "fire_7d",
+      "fire_10d",
+      "nbr3_lag1",
+      "nbr5_7d",
+      "days_since_fire",
+      "region_fires_lag1",
+      "elev_m",
+      "slope_pct"
+    ],
+    "threshold_selection": "original pipeline: random 15 % split of the training seasons",
+    "metrics": {
+      "n": 211400,
+      "positive_rate": 0.04350047303689688,
+      "roc_auc": 0.8704002397064127,
+      "pr_auc": 0.2606082818213775,
+      "brier": 0.036078463202078595,
+      "log_loss": 0.13455685259952332,
+      "expected_calibration_error": 0.0033419764602906532,
+      "calibration": [
+        {
+          "bin": 0,
+          "n": 20685,
+          "mean_predicted": 0.000334915553917433,
+          "observed_rate": 0.0
+        },
+        {
+          "bin": 1,
+          "n": 21595,
+          "mean_predicted": 0.0006648871030356165,
+          "observed_rate": 0.0001389210465385506
+        },
+        {
+          "bin": 2,
+          "n": 21140,
+          "mean_predicted": 0.0034399667902683968,
+          "observed_rate": 0.001750236518448439
+        },
+        {
+          "bin": 3,
+          "n": 21140,
+          "mean_predicted": 0.007677347533375751,
+          "observed_rate": 0.006102175969725639
+        },
+        {
+          "bin": 4,
+          "n": 21140,
+          "mean_predicted": 0.01276758562860695,
+          "observed_rate": 0.009697256385998108
+        },
+        {
+          "bin": 5,
+          "n": 21140,
+          "mean_predicted": 0.01956718134823323,
+          "observed_rate": 0.01825922421948912
+        },
+        {
+          "bin": 6,
+          "n": 21140,
+          "mean_predicted": 0.02981616984127669,
+          "observed_rate": 0.029706717123935668
+        },
+        {
+          "bin": 7,
+          "n": 21140,
+          "mean_predicted": 0.04679503005276396,
+          "observed_rate": 0.052885525070955536
+        },
+        {
+          "bin": 8,
+          "n": 21140,
+          "mean_predicted": 0.07963363234299106,
+          "observed_rate": 0.08722800378429517
+        },
+        {
+          "bin": 9,
+          "n": 21140,
+          "mean_predicted": 0.21811641663235376,
+          "observed_rate": 0.2292336802270577
+        }
+      ],
+      "early_warning": {
+        "threshold": 0.04,
+        "accuracy": 0.7465752128666036,
+        "precision": 0.12828760009381177,
+        "recall": 0.832753371030883,
+        "f1": 0.22232544636376833,
+        "macro_f1": 0.5354739887578781,
+        "weighted_f1": 0.8213783117020707,
+        "false_positive_rate": 0.25734406836660007,
+        "false_negative_rate": 0.16724662896911702,
+        "confusion_matrix": {
+          "tn": 150168,
+          "fp": 52036,
+          "fn": 1538,
+          "tp": 7658
+        },
+        "per_class": {
+          "no_fire": {
+            "precision": 0.9898619698627609,
+            "recall": 0.7426559316333999,
+            "f1": 0.8486225311519878,
+            "support": 202204
+          },
+          "fire": {
+            "precision": 0.12828760009381177,
+            "recall": 0.832753371030883,
+            "f1": 0.22232544636376833,
+            "support": 9196
+          }
+        }
+      },
+      "alert": {
+        "threshold": 0.12499999999999997,
+        "accuracy": 0.9130605487228004,
+        "precision": 0.24577819611317203,
+        "recall": 0.4827098738581992,
+        "f1": 0.32571449535899033,
+        "macro_f1": 0.6396246282171358,
+        "weighted_f1": 0.9262242825344724,
+        "false_positive_rate": 0.06736760894937785,
+        "false_negative_rate": 0.5172901261418008,
+        "confusion_matrix": {
+          "tn": 188582,
+          "fp": 13622,
+          "fn": 4757,
+          "tp": 4439
+        },
+        "per_class": {
+          "no_fire": {
+            "precision": 0.9753955487511573,
+            "recall": 0.9326323910506221,
+            "f1": 0.9535347610752813,
+            "support": 202204
+          },
+          "fire": {
+            "precision": 0.24577819611317203,
+            "recall": 0.4827098738581992,
+            "f1": 0.32571449535899033,
+            "support": 9196
+          }
+        }
+      }
+    }
+  },
+  "candidates": [
+    {
+      "name": "xgb_regularised_no_latlon",
+      "feature_columns": [
+        "wx_temperature_c",
+        "wx_humidity_pct",
+        "wx_wind_speed_ms",
+        "wx_precipitation_mm",
+        "ffmc",
+        "dmc",
+        "dc",
+        "bui",
+        "fwi",
+        "month",
+        "day_of_year",
+        "fwi_lag1",
+        "zone_clim",
+        "nbr_clim",
+        "fire_lag1",
+        "fire_7d",
+        "fire_10d",
+        "nbr3_lag1",
+        "nbr5_7d",
+        "days_since_fire",
+        "region_fires_lag1",
+        "elev_m",
+        "slope_pct"
+      ],
+      "params": {
+        "n_estimators": 200,
+        "max_depth": 4,
+        "learning_rate": 0.03,
+        "min_child_weight": 20,
+        "subsample": 0.8,
+        "colsample_bytree": 0.7,
+        "reg_lambda": 2.0,
+        "tree_method": "hist",
+        "random_state": 42
+      },
+      "threshold_selection": "season-wise out-of-season predictions on 2023/2024",
+      "season_cv_pr_auc": 0.19320464339457563,
+      "metrics": {
+        "n": 211400,
+        "positive_rate": 0.04350047303689688,
+        "roc_auc": 0.8708169586317545,
+        "pr_auc": 0.26065252189849103,
+        "brier": 0.036081441115849384,
+        "log_loss": 0.13440846865895054,
+        "expected_calibration_error": 0.0028257142950415554,
+        "calibration": [
+          {
+            "bin": 0,
+            "n": 21099,
+            "mean_predicted": 0.00022680817215098019,
+            "observed_rate": 0.0
+          },
+          {
+            "bin": 1,
+            "n": 21181,
+            "mean_predicted": 0.0005090835210844526,
+            "observed_rate": 0.00014163637222038618
+          },
+          {
+            "bin": 2,
+            "n": 21140,
+            "mean_predicted": 0.00299580394455704,
+            "observed_rate": 0.0015610217596972564
+          },
+          {
+            "bin": 3,
+            "n": 21140,
+            "mean_predicted": 0.007191553239445418,
+            "observed_rate": 0.00619678334910123
+          },
+          {
+            "bin": 4,
+            "n": 21140,
+            "mean_predicted": 0.012401009201228112,
+            "observed_rate": 0.009318826868495743
+          },
+          {
+            "bin": 5,
+            "n": 21140,
+            "mean_predicted": 0.019139288656295488,
+            "observed_rate": 0.01802270577105014
+          },
+          {
+            "bin": 6,
+            "n": 21140,
+            "mean_predicted": 0.029301724876228688,
+            "observed_rate": 0.029848628192999053
+          },
+          {
+            "bin": 7,
+            "n": 21140,
+            "mean_predicted": 0.04675466134499268,
+            "observed_rate": 0.05255439924314097
+          },
+          {
+            "bin": 8,
+            "n": 21140,
+            "mean_predicted": 0.08053444129332914,
+            "observed_rate": 0.08836329233680228
+          },
+          {
+            "bin": 9,
+            "n": 21140,
+            "mean_predicted": 0.2221383564632347,
+            "observed_rate": 0.22899716177861873
+          }
+        ],
+        "early_warning": {
+          "threshold": 0.029999999999999995,
+          "accuracy": 0.6908136234626301,
+          "precision": 0.11234884876594335,
+          "recall": 0.8850587211831231,
+          "f1": 0.1993875551200392,
+          "macro_f1": 0.5039000151025217,
+          "weighted_f1": 0.7819196029752699,
+          "false_positive_rate": 0.318020415026409,
+          "false_negative_rate": 0.11494127881687691,
+          "confusion_matrix": {
+            "tn": 137899,
+            "fp": 64305,
+            "fn": 1057,
+            "tp": 8139
+          },
+          "per_class": {
+            "no_fire": {
+              "precision": 0.992393275569245,
+              "recall": 0.681979584973591,
+              "f1": 0.8084124750850041,
+              "support": 202204
+            },
+            "fire": {
+              "precision": 0.11234884876594335,
+              "recall": 0.8850587211831231,
+              "f1": 0.1993875551200392,
+              "support": 9196
+            }
+          }
+        },
+        "alert": {
+          "threshold": 0.11499999999999998,
+          "accuracy": 0.905600756859035,
+          "precision": 0.23361061596355714,
+          "recall": 0.5130491518051327,
+          "f1": 0.3210397387044094,
+          "macro_f1": 0.6351568874097937,
+          "weighted_f1": 0.9219455469998071,
+          "false_positive_rate": 0.07654645803248204,
+          "false_negative_rate": 0.48695084819486734,
+          "confusion_matrix": {
+            "tn": 186726,
+            "fp": 15478,
+            "fn": 4478,
+            "tp": 4718
+          },
+          "per_class": {
+            "no_fire": {
+              "precision": 0.9765799878663626,
+              "recall": 0.9234535419675179,
+              "f1": 0.9492740361151781,
+              "support": 202204
+            },
+            "fire": {
+              "precision": 0.23361061596355714,
+              "recall": 0.5130491518051327,
+              "f1": 0.3210397387044094,
+              "support": 9196
+            }
+          }
+        }
+      },
+      "gate": {
+        "passed": false,
+        "checks": {
+          "pr_auc_gain": {
+            "delta": 4.424007711351097e-05,
+            "ok": false
+          },
+          "roc_auc_change": {
+            "delta": 0.0004167189253417858,
+            "ok": true
+          },
+          "log_loss_change": {
+            "delta": -0.00014838394057278825,
+            "ok": true
+          },
+          "early_warning_recall_change": {
+            "delta": 0.05230535015224014,
+            "ok": true
+          }
+        }
+      }
+    },
+    {
+      "name": "xgb_regularised_all_features",
+      "feature_columns": [
+        "wx_temperature_c",
+        "wx_humidity_pct",
+        "wx_wind_speed_ms",
+        "wx_precipitation_mm",
+        "ffmc",
+        "dmc",
+        "dc",
+        "bui",
+        "fwi",
+        "month",
+        "day_of_year",
+        "fwi_lag1",
+        "zone_clim",
+        "nbr_clim",
+        "latitude",
+        "longitude",
+        "fire_lag1",
+        "fire_7d",
+        "fire_10d",
+        "nbr3_lag1",
+        "nbr5_7d",
+        "days_since_fire",
+        "region_fires_lag1",
+        "elev_m",
+        "slope_pct"
+      ],
+      "params": {
+        "n_estimators": 200,
+        "max_depth": 4,
+        "learning_rate": 0.03,
+        "min_child_weight": 20,
+        "subsample": 0.8,
+        "colsample_bytree": 0.7,
+        "reg_lambda": 2.0,
+        "tree_method": "hist",
+        "random_state": 42
+      },
+      "threshold_selection": "season-wise out-of-season predictions on 2023/2024",
+      "season_cv_pr_auc": 0.18221863969616375,
+      "metrics": {
+        "n": 211400,
+        "positive_rate": 0.04350047303689688,
+        "roc_auc": 0.8708266622137228,
+        "pr_auc": 0.26135906796626873,
+        "brier": 0.036064606426130755,
+        "log_loss": 0.13437041377457856,
+        "expected_calibration_error": 0.0030267494292982207,
+        "calibration": [
+          {
+            "bin": 0,
+            "n": 21103,
+            "mean_predicted": 0.00023097255767353484,
+            "observed_rate": 0.0
+          },
+          {
+            "bin": 1,
+            "n": 21177,
+            "mean_predicted": 0.0005102691947738181,
+            "observed_rate": 0.00014166312508853945
+          },
+          {
+            "bin": 2,
+            "n": 21140,
+            "mean_predicted": 0.003050439855163783,
+            "observed_rate": 0.0015137180700094607
+          },
+          {
+            "bin": 3,
+            "n": 21140,
+            "mean_predicted": 0.00722240438418729,
+            "observed_rate": 0.0062440870387890255
+          },
+          {
+            "bin": 4,
+            "n": 21139,
+            "mean_predicted": 0.012433148446349709,
+            "observed_rate": 0.009934244760868537
+          },
+          {
+            "bin": 5,
+            "n": 21141,
+            "mean_predicted": 0.01926435335586374,
+            "observed_rate": 0.01721772858426754
+          },
+          {
+            "bin": 6,
+            "n": 21140,
+            "mean_predicted": 0.029435181051982583,
+            "observed_rate": 0.029801324503311258
+          },
+          {
+            "bin": 7,
+            "n": 21140,
+            "mean_predicted": 0.04669799340013044,
+            "observed_rate": 0.052980132450331126
+          },
+          {
+            "bin": 8,
+            "n": 21140,
+            "mean_predicted": 0.08034560376427567,
+            "observed_rate": 0.08713339640491959
+          },
+          {
+            "bin": 9,
+            "n": 21140,
+            "mean_predicted": 0.22086678951266756,
+            "observed_rate": 0.23003784295175023
+          }
+        ],
+        "early_warning": {
+          "threshold": 0.027499999999999997,
+          "accuracy": 0.6709508041627247,
+          "precision": 0.1074025416563691,
+          "recall": 0.8978903871248369,
+          "f1": 0.19185593958756897,
+          "macro_f1": 0.492637450824299,
+          "weighted_f1": 0.767250686021928,
+          "false_positive_rate": 0.33937014104567664,
+          "false_negative_rate": 0.10210961287516311,
+          "confusion_matrix": {
+            "tn": 133582,
+            "fp": 68622,
+            "fn": 939,
+            "tp": 8257
+          },
+          "per_class": {
+            "no_fire": {
+              "precision": 0.9930196772251173,
+              "recall": 0.6606298589543234,
+              "f1": 0.793418962061029,
+              "support": 202204
+            },
+            "fire": {
+              "precision": 0.1074025416563691,
+              "recall": 0.8978903871248369,
+              "f1": 0.19185593958756897,
+              "support": 9196
+            }
+          }
+        },
+        "alert": {
+          "threshold": 0.10999999999999997,
+          "accuracy": 0.9013386944181646,
+          "precision": 0.22844767360625962,
+          "recall": 0.5333840800347978,
+          "f1": 0.31988782730622495,
+          "macro_f1": 0.6333496203903675,
+          "weighted_f1": 0.9195399409182017,
+          "false_positive_rate": 0.0819271626674052,
+          "false_negative_rate": 0.46661591996520224,
+          "confusion_matrix": {
+            "tn": 185638,
+            "fp": 16566,
+            "fn": 4291,
+            "tp": 4905
+          },
+          "per_class": {
+            "no_fire": {
+              "precision": 0.9774073469559678,
+              "recall": 0.9180728373325948,
+              "f1": 0.9468114134745099,
+              "support": 202204
+            },
+            "fire": {
+              "precision": 0.22844767360625962,
+              "recall": 0.5333840800347978,
+              "f1": 0.31988782730622495,
+              "support": 9196
+            }
+          }
+        }
+      },
+      "gate": {
+        "passed": false,
+        "checks": {
+          "pr_auc_gain": {
+            "delta": 0.0007507861448912134,
+            "ok": false
+          },
+          "roc_auc_change": {
+            "delta": 0.0004264225073101757,
+            "ok": true
+          },
+          "log_loss_change": {
+            "delta": -0.00018643882494476238,
+            "ok": true
+          },
+          "early_warning_recall_change": {
+            "delta": 0.06513701609395395,
+            "ok": true
+          }
+        }
+      }
+    }
+  ],
+  "decision": "KEEP serving model: no candidate passed the promotion gate on the held-out season",
+  "selected": "serving model (baseline)"
+}

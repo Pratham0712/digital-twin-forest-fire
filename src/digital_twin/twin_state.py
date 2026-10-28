@@ -67,6 +67,9 @@ class TwinSnapshot:
     # Wind that drove the latest spread simulation:
     # {"source": "forecast" | "current", "speed_ms", "from_deg", "n_points"}
     ca_wind: Optional[dict] = None
+    # Model provenance of risk_scores (prediction_service.PredictionResult.summary()):
+    # model_version, model_file, predicted_utc, missing_features, ... None = FWI fallback (no model)
+    prediction: Optional[dict] = None
 
 
 class AlertEngine:
@@ -75,7 +78,7 @@ class AlertEngine:
     fire risk probability exceeds 70%'. Severity bands are documented so the
     dashboard and report use identical language.
     """
-    SEVERITY_BANDS = [
+    SEVERITY_BANDS = [            # identical to prediction_service.SEVERITY_BANDS (tested)
         (0.60, "EXTREME"),
         (0.40, "HIGH"),
         (0.20, "MODERATE"),
@@ -159,6 +162,7 @@ class DigitalTwin:
             MODELS_DIR, climatology_file or self.model_choice.climatology_file)
         from src.ml_models.risk_index import RiskIndex
         self.risk_index = RiskIndex.load(MODELS_DIR, self.model_choice.risk_index_file)
+        self.last_prediction: Optional[dict] = None
         self.last_timings: dict = {}
         self.terrain = TerrainTable.load(MODELS_DIR, self.region.name)
         self._forecast_cache: dict = {}
@@ -187,17 +191,23 @@ class DigitalTwin:
                          .merge(terrain, on="zone_id", how="left"))
 
     def _compute_risk_scores(self, processed: pd.DataFrame) -> np.ndarray:
+        self.last_prediction = None
         if self.ml_model is not None:
-            X, _ = self.processor.get_feature_matrix(processed, real=self.use_real_model,
-                                                     columns=self._model_columns())
-            _, probs = self.ml_model.predict(X)
-            processed["fire_probability"] = probs
-            # Dashboard risk = validated risk index (see risk_index.py); the
-            # raw calibrated probability stays available as fire_probability.
-            return self.risk_index.transform(probs) if self.risk_index is not None else probs
+            # The shared prediction service: model-ordered features, inf -> missing,
+            # probability -> validated risk index, model version + timestamp.
+            from src.ml_models.prediction_service import predict
+            res = predict(self.ml_model, processed, self.risk_index, model_file=self.model_choice.model_file)
+            processed["fire_probability"] = res.fire_probability
+            processed["risk_index"] = res.risk_index
+            if res.risk_score is not None:
+                processed["ml_risk_score"] = res.risk_score
+            self.last_prediction = res.summary()
+            return res.risk_index
         # Fallback: normalise FWI into a pseudo-probability so the twin is
-        # still functional before/without a trained model.
+        # still functional before/without a trained model (labelled as a heuristic).
         fwi = processed["fwi"].values
+        self.last_prediction = {"model_version": "heuristic (no trained model loaded)", "model_file": None,
+                                "predicted_utc": datetime.now(timezone.utc).isoformat(), "heuristic": True}
         return np.clip(fwi / 100.0, 0, 1)
 
     def refresh(self) -> TwinSnapshot:
@@ -233,6 +243,7 @@ class DigitalTwin:
         self.last_timings = {
             "ingest_s": t_ingest - t0, "features_s": t_features - t_ingest,
             "model_s": t_model - t_features, "total_s": t_model - t0,
+            **(getattr(self.ingestion, "last_fetch_timings", None) or {}),
         }
 
         n_rows = int(processed["row"].max()) + 1
@@ -241,7 +252,7 @@ class DigitalTwin:
         self.current_snapshot = TwinSnapshot(
             timestamp=datetime.now(timezone.utc).isoformat(),
             processed_grid=processed, risk_scores=risk_scores,
-            n_rows=n_rows, n_cols=n_cols, alerts=alerts,
+            n_rows=n_rows, n_cols=n_cols, alerts=alerts, prediction=self.last_prediction,
         )
         logger.info(
             "DigitalTwin refreshed: %d zones, %d alerts, max risk %.2f",
@@ -446,6 +457,8 @@ class DigitalTwin:
             "severity_breakdown": severity_counts,
             "max_risk_score": float(snap.risk_scores.max()) if len(snap.risk_scores) else 0.0,
             "mean_risk_score": float(snap.risk_scores.mean()) if len(snap.risk_scores) else 0.0,
+            "model_version": (snap.prediction or {}).get("model_version"),
+            "predicted_utc": (snap.prediction or {}).get("predicted_utc"),
         }
 
 
@@ -464,9 +477,11 @@ def persist_snapshot_and_notify(twin: "DigitalTwin", notifier=None,
       (i.e. before this refresh) from the database.
     - Saves this refresh as a new snapshot row + one alerts_log row per
       alert (cross-question 6/11: "where is the data being stored").
-    - Diffs current EXTREME zones against the previous set. Only zones
-      that are NEWLY extreme trigger an email - a zone that was already
-      extreme last cycle does not re-notify every 15 minutes.
+    - Diffs current EXTREME zones against the previous set (activity log
+      "new_extreme"), then hands the refresh to auto_alerts.process_refresh:
+      EXTREME zones at or above the configured model-confidence threshold,
+      from real (non-demo, non-What-If) data, outside the per-incident
+      cooldown, are notified by SMS (textbee / Twilio) with e-mail fallback.
     - Never raises: a DB or SMTP failure must not break a dashboard page
       render or a scheduler cycle. Failures are logged and reflected in
       the returned dict instead.
@@ -512,8 +527,9 @@ def persist_snapshot_and_notify(twin: "DigitalTwin", notifier=None,
               f"peak risk {summary.get('max_risk_score', 0):.0%} · "
               f"{'offline' if twin.offline else 'live'} data")
     if t:
-        detail += (f" · {t['total_s']:.1f}s (data {t['ingest_s']:.1f}s, "
-                   f"features {t['features_s']:.2f}s, model {t['model_s']:.2f}s)")
+        detail += (f" · {t['total_s']:.1f}s (data {t['ingest_s']:.1f}s"
+                   + (f" [FIRMS {t['firms_s']:.1f}s ‖ weather {t['weather_s']:.1f}s]" if "firms_s" in t else "")
+                   + f", features {t['features_s']:.2f}s, model {t['model_s']:.2f}s)")
     if trigger:
         detail = f"{trigger} — {detail}"
     db.log_activity("refresh", detail, actor, region_name)
@@ -529,19 +545,17 @@ def persist_snapshot_and_notify(twin: "DigitalTwin", notifier=None,
         more = f" and {len(top) - 5} more" if len(top) > 5 else ""
         db.log_activity("new_extreme", f"{len(top)} zone(s) newly EXTREME: {names}{more}",
                         actor, region_name)
-        if notifier is None:
-            from src.notifications.email_notifier import EmailNotifier
-            notifier = EmailNotifier()
-        try:
-            result["emailed"] = notifier.send_new_extreme_alert(region_name, new_alerts)
-        except Exception as exc:
-            logger.warning("Email notification raised unexpectedly (%s) - ignored.", exc)
-        if getattr(notifier, "is_configured", False):
-            if result["emailed"]:
-                db.log_activity("email_sent", f"Alert email for {len(top)} zone(s) sent to "
-                                f"{len(notifier.recipients)} recipient(s)", actor, region_name)
-            else:
-                db.log_activity("email_failed", "Alert email could not be sent", actor, region_name)
+
+    # Automatic SMS / e-mail notification: confidence threshold, persistent per-incident cooldown,
+    # demo / What-If data never notifies, SMS -> e-mail fallback (src/notifications/auto_alerts.py).
+    # `notifier` is accepted for backward compatibility and no longer used.
+    try:
+        from src.notifications import auto_alerts
+        res = auto_alerts.process_refresh(twin, actor=actor)
+        result["auto_alert"] = res
+        result["emailed"] = str(res.get("email_status") or "").startswith("accepted")
+    except Exception as exc:
+        logger.warning("Automatic alert evaluation raised unexpectedly (%s) - ignored.", exc)
 
     return result
 

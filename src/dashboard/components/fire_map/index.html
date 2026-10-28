@@ -106,6 +106,22 @@ button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.
 #rtools{right:10px;top:58px;padding:6px}
 #rtip{padding:8px 10px;font-size:11px;pointer-events:none;min-width:170px;z-index:14}
 #rtip b{font-size:12px}
+/* ── Professional Navy Blue (html.ff-navy, mirrors the dashboard's Appearance setting).
+   Only the interface panels change; satellite imagery and every fire / smoke / ember
+   canvas are drawn exactly as in Default Dark. ── */
+html.ff-navy{--surface:rgba(8,29,51,.90);--border:#1F4C78;--text:#F3F7FC;--muted:#8298B3;--accent:#00B8F0;--blue:#6FC3F5}
+html.ff-navy #wrap{border-color:#163A5E;background:#061426}
+html.ff-navy .panel{box-shadow:0 8px 26px rgba(0,0,0,.45)}
+html.ff-navy #hud .t{color:#00B8F0}
+html.ff-navy #search input,html.ff-navy #results{background:#0A2038;border-color:#1F4C78}
+html.ff-navy #results div{border-bottom-color:#163A5E} html.ff-navy #results div:hover{background:#0B2542}
+html.ff-navy button{background:#0B2542;border-color:#1F4C78}
+html.ff-navy button:hover{border-color:#00B8F0}
+html.ff-navy button.on{border-color:#00B8F0;color:#DDF4FF;background:rgba(0,184,240,.16)}
+html.ff-navy button.prim{background:#0878F9;color:#FFFFFF}
+html.ff-navy #tl{accent-color:#0878F9}
+html.ff-navy #err{background:rgba(6,20,38,.96)}
+html.ff-navy .sep{background:#1F4C78}
 </style></head>
 <body>
 <div id="wrap">
@@ -124,7 +140,7 @@ button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.
     <div class="sub">of <span id="hdur"></span> · <span id="hstat">ready</span></div>
     <div class="g">
       <span>Ignition</span><span id="hign">-</span>
-      <span>ML risk (predicted)</span><span id="hrisk">-</span>
+      <span title="Model risk index: 20% = early-warning, 40% = alert, 60% = extreme operating point (not a probability)">Risk index (model)</span><span id="hrisk">-</span>
       <span>Burning now</span><span id="hburnA">0 ha</span>
       <span>Burned total</span><span id="harea">0 ha</span>
       <span>Front · spread</span><span id="hdist">0 m</span>
@@ -272,6 +288,12 @@ button.pick{border-color:var(--pink);color:#ffc2e6;background:rgba(255,140,207,.
   <div id="toast" class="panel"></div>
   <div id="err"></div>
 </div>
+<script>
+/* Appearance: follow the dashboard's theme attribute (set by the theme_switch component). */
+(function(){function sync(){var t="dark";try{t=window.parent.document.documentElement.getAttribute("data-ff-theme")||"dark";}catch(e){}
+  document.documentElement.classList.toggle("ff-navy",t==="navy");}
+ sync();try{new MutationObserver(sync).observe(window.parent.document.documentElement,{attributes:true,attributeFilter:["data-ff-theme"]});}catch(e){}})();
+</script>
 <script>
 "use strict";
 // ── Streamlit component protocol (no build step: plain postMessage) ─────────
@@ -642,7 +664,7 @@ function mapGround(g,img,box){
 let stLow=null,stLowCtx=null,stLowImg=null,stF=null,stFCtx=null,stDyn=null,stDynCtx=null,stAll=null,stAllCtx=null,
     nfC=null,stNoise=null,FRES=1,stW=0,stH=0,stateT=-99,FIRE_BOX=null,NF_BOX=null;
 function setupState(){
-  FRES=Math.min(SCAR_RES,clamp(1100/Math.max(2*DX0,2*DY0),0.05,8/CELL));      // <= 8 px per cell, <= ~1100 px
+  FRES=Math.min(SCAR_RES,clamp(900/Math.max(2*DX0,2*DY0),0.05,5/CELL));       // <= 5 px per cell, <= ~900 px (GPU smooths further)
   stW=Math.max(1,Math.round(2*SCAR_EX*FRES));stH=Math.max(1,Math.round(2*SCAR_EY*FRES));
   const mk=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
   stLow=mk(DC,DR);stLowCtx=stLow.getContext('2d');stLowImg=stLowCtx.createImageData(DC,DR);
@@ -660,8 +682,11 @@ function setupState(){
   if(LC){const d=stLowImg.data;d.fill(0);for(let i=0;i<NC;i++){const k=i*4;d[k+3]=255;if(LC[i])d[k+2]=255;}
     const out=contourField(true,null);if(out)nctx.putImageData(out.img,out.x0,out.y0);}
   NF_BOX=null;if(LC){for(let i=0;i<NC;i++)if(LC[i]){NF_BOX=[-DXW,DXE,-DYS,DYN];break;}}
-  stateT=-99;FIRE_BOX=null;
+  stateT=-99;stateKey='';FIRE_BOX=null;
 }
+// number of entries <= t in an ascending Float32Array (binary search)
+function countLE(a,t){if(!a)return 0;let lo=0,hi=a.length;while(lo<hi){const m=(lo+hi)>>1;if(a[m]<=t)lo=m+1;else hi=m;}return lo;}
+let SORT_IGN=null,SORT_OUT=null;
 const sstep=(e0,e1,v)=>{const x=clamp((v-e0)/(e1-e0),0,1);return x*x*(3-2*x);};
 // up-sample stLowImg onto the metre-space field and return the coloured, contoured pixels inside the
 // cell bounding box `box` [r0,r1,c0,c1] (or the whole domain). nonFuel: blue channel only.
@@ -692,8 +717,11 @@ function contourField(nonFuel,box){
     o[k]=Math.round(30+225*f);o[k+1]=Math.round(10+70*f);o[k+2]=0;o[k+3]=Math.round(255*clamp(al,0,1)*A);}}
   return {img,x0,y0};
 }
+let stateKey='';
 function renderState(t){
   if(!stLow||!P||!P.cells)return;
+  // the surface depends only on WHICH cells are burning / burned at t: skip the rebuild when that set is unchanged
+  const key=countLE(SORT_IGN,t)+'|'+countLE(SORT_OUT,t);if(key===stateKey&&stateT>=0)return;stateKey=key;
   const d=stLowImg.data;d.fill(0);for(let k=3;k<d.length;k+=4)d[k]=255;
   let r0=1e9,r1=-1,c0=1e9,c1=-1;
   for(const i of P.cells){const a=IGN[i];if(a<0||t<a)continue;const k=i*4;d[k+1]=255;if(t<OUT[i])d[k]=255;
@@ -1114,12 +1142,13 @@ function needsFrames(){
 function loop(now){
   raf=requestAnimationFrame(loop);
   if(last===null)last=now;const dt=Math.min((now-last)/1000,0.05);last=now;
-  frameMs=frameMs*0.95+dt*1000*0.05;
+  frameMs=frameMs*0.95+Math.min(dt*1000,34)*0.05;          // an isolated slow frame counts at most as 34 ms
   if(frameMs>30)budget=Math.max(0.35,budget-0.01);else if(frameMs<18)budget=Math.min(1,budget+0.005);
   if(budget<=0.36&&frameMs>32&&RS>0.6&&now-(loop.rsT||0)>1500){RS=Math.round((RS-0.1)*10)/10;resize();loop.rsT=now;}
-  else if(frameMs<15&&RS<1&&now-(loop.rsT||0)>3000){RS=Math.round((RS+0.1)*10)/10;resize();loop.rsT=now;}
+  else if(!playing&&frameMs<15&&RS<1&&now-(loop.rsT||0)>3000){RS=Math.round((RS+0.1)*10)/10;resize();loop.rsT=now;}
   if(!P||!map)return;
   if(MODE==='region'){renderRegion();return;}
+  if(now-(loop.saveT||0)>500){loop.saveT=now;saveClock();}
   if(playing){const secPerStep=P.secPerStep||1.1;simT=Math.min(ENDT,simT+dt*speed/secPerStep);tl.value=String(simT);if(simT>=ENDT-1e-9)setPlaying(false);}
   if(GLOV&&MVP&&!MVP_BAD){
     // 3-D: draw inside Google's own frame (onDraw) so effects and imagery use the same camera
@@ -1231,8 +1260,18 @@ $('wrap').addEventListener('mouseleave',()=>$('rtip').classList.add('hide'));
 
 // ── apply a payload from Python (first load or rerun with new arguments) ────
 let BY_OUT=[];
+const CLOCK_KEY='fire_map_clock';let RESTORED=false;
+function saveClock(){try{const sg=simSig(P);if(sg)sessionStorage.setItem(CLOCK_KEY,JSON.stringify({sg,t:simT,playing,ts:Date.now()}));}catch(e){}}
+function loadClock(sg){try{const c=JSON.parse(sessionStorage.getItem(CLOCK_KEY)||'null');
+  if(c&&c.sg===sg&&Date.now()-c.ts<60000&&isFinite(c.t))return {t:c.t,playing:!!c.playing,speed};}catch(e){}return null;}
+function simSig(p){return p&&p.mode==='sim'&&p.hasRun?[p.reportId||'',p.endT,(p.cells||[]).length,p.domain&&p.domain.n_rows,p.domain&&p.domain.n_cols,p.focus&&p.focus.lat,p.focus&&p.focus.lon].join('|'):null;}
 function applyPayload(p){
   if(p.mode==='region'){applyRegion(p);return;}
+  // A rerun that re-sends the SAME completed simulation (e.g. another widget changed) must not restart the
+  // playback: remember the clock and particles and restore them after the arrays are rebuilt.
+  let sameSim=!!P&&simSig(P)!==null&&simSig(P)===simSig(p),keep=sameSim?{t:simT,playing,speed}:null;
+  if(!P&&simSig(p)){                // the component was re-mounted by Streamlit: continue the same playback
+    const c=loadClock(simSig(p));if(c){sameSim=true;keep=c;RESTORED=true;}}
   const focusMoved=!P||Math.abs(P.focus.lat-p.focus.lat)>1e-7||Math.abs(P.focus.lon-p.focus.lon)>1e-7;
   const sizeChanged=!P||P.focus.width_m!==p.focus.width_m||P.focus.height_m!==p.focus.height_m||P.focus.cell_m!==p.focus.cell_m;
   const firstLoad=!P;P=p;MODE=p.mode;UID=p.uid;
@@ -1254,9 +1293,12 @@ function applyPayload(p){
     const fi=Math.floor(IGN[i]),fo=Math.floor(Math.min(OUT[i],1e6));
     (BY_IGN[fi]=BY_IGN[fi]||[]).push(i);(BY_OUT[fo]=BY_OUT[fo]||[]).push(i);});}
   LAST=p.lastStep||0;ENDT=p.hasRun?p.endT:0;buildActive();
-  ACC={flame:new Float32Array(NC),ember:new Float32Array(NC),ash:new Float32Array(NC),smoke:new Float32Array(NC)};
+  SORT_IGN=p.hasRun?Float32Array.from(p.cells.map(i=>IGN[i])).sort():null;
+  SORT_OUT=p.hasRun?Float32Array.from(p.cells.map(i=>OUT[i])).sort():null;
+  if(!sameSim||!ACC)ACC={flame:new Float32Array(NC),ember:new Float32Array(NC),ash:new Float32Array(NC),smoke:new Float32Array(NC)};
   PICKS=(p.ignitionPoints||[]).map(q=>[q[0],q[1]]);
-  simT=0;activeKey=null;frontKey=-1;clearParticles();setupScar();buildTrees();lastHudStep=-2;DRAG=null;DRAGD=null;
+  if(sameSim){simT=keep.t;activeKey=null;frontKey=-1;setupScar();buildTrees();lastHudStep=-2;scarDirty=true;}
+  else{simT=0;activeKey=null;frontKey=-1;clearParticles();setupScar();buildTrees();lastHudStep=-2;DRAG=null;DRAGD=null;}
   if(firstLoad&&p.layers){for(const k in p.layers)if(k in show)show[k]=!!p.layers[k];}
   syncToggles();gridDirty=true;
   // panels per mode
@@ -1277,7 +1319,7 @@ function applyPayload(p){
     $('hstale').style.display=p.staleNote?'block':'none';setTxt('hstale',p.staleNote||'');
     setTxt('hfocus',Math.round(p.focus.width_m)+' × '+Math.round(p.focus.height_m)+' m');
     setTxt('hdom',Math.round(DC*CELL)+' × '+Math.round(DR*CELL)+' m');
-    tl.max=String(ENDT);tl.value='0';tl.disabled=!p.hasRun;bPlay.disabled=!p.hasRun;setPlaying(false);pbInfo();
+    tl.max=String(ENDT);tl.value=String(simT);tl.disabled=!p.hasRun;bPlay.disabled=!p.hasRun;setPlaying(sameSim&&keep.playing);pbInfo();
     $('lhot').textContent=p.hotspotKind==='observed'?'Observed hotspot (NASA FIRMS VIIRS)':'Demo hotspot (synthetic, not observed)';}
   $('lreg').classList.toggle('hide',!REG);$('lext').classList.toggle('hide',!(OUTB&&OUTB.length));
   if(REG)setTxt('lregt',REG.name+' boundary · '+REG.status);
@@ -1288,7 +1330,7 @@ function applyPayload(p){
   const fromDrag=expectFocus&&Math.abs(expectFocus.lat-p.focus.lat)<2e-4&&Math.abs(expectFocus.lon-p.focus.lon)<2e-4;expectFocus=null;
   if(gmReady){syncMapObjects(focusMoved||sizeChanged);
     if(focusMoved&&!fromDrag)setTimeout(()=>camSim(1600),100);
-    if(p.autoplay&&p.hasRun)setTimeout(()=>setPlaying(true),focusMoved?1800:400);}
+    if(p.autoplay&&p.hasRun&&!sameSim)setTimeout(()=>setPlaying(true),focusMoved?1800:400);}
 }
 
 function rectBounds(){const f=P.focus;const dlat=FRN*CELL/2/111320,dlon=FCN*CELL/2/MLON;
@@ -1458,7 +1500,7 @@ async function initMap(){
     google.maps.event.addListenerOnce(map,'idle',()=>{
       setTimeout(()=>reportMapStatus({ok:true,vector:IS_VECTOR}),600);
       if(MODE==='region'){fitRegion();return;}
-      setTimeout(()=>{camSim(2200);if(P.autoplay&&P.hasRun)setTimeout(()=>setPlaying(true),2400);},300);});
+      setTimeout(()=>{camSim(2200);if(P.autoplay&&P.hasRun&&!RESTORED)setTimeout(()=>setPlaying(true),2400);},300);});
   }catch(e){reportMapStatus({ok:false,error:'Google Maps could not load: '+String(e&&e.message||e).slice(0,160)});showErr('<div><b>Google Maps could not load.</b><br>'+String(e&&e.message||e)+'</div>');console.error(e);}
 }
 
