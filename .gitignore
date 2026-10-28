@@ -29,3 +29,5 @@ data/*.db
 # Local caches of downloaded geodata (re-created automatically)
 models/land_cover/
 models/focus_terrain/
+
+azure.env
